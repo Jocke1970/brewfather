@@ -313,6 +313,7 @@ class BrewfatherSensor(CoordinatorEntity[BrewfatherCoordinator], SensorEntity):
         _LOGGER.debug(" sensor attributes : %s", sensor_data.extra_state_attributes)
         self._state = sensor_data.state
         self._attr_available = sensor_data.attr_available
+        self._attr_extra_state_attributes = sensor_data.extra_state_attributes
         self.async_write_ha_state()
 
     @staticmethod
