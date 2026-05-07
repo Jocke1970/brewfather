@@ -281,7 +281,11 @@ class BrewfatherSensor(CoordinatorEntity[BrewfatherCoordinator], SensorEntity):
         self._dev_id = {}
 
         brewfatherCoordinator: BrewfatherCoordinator = coordinator
+        _LOGGER.debug(" __init__ | Initial refresh of the sensor data : %s", self._sensor_type.name)
         sensor_data = self._refresh_sensor_data(brewfatherCoordinator.data, self._sensor_type, self.device_class, self.entity_id)
+        _LOGGER.debug(" sensor state : %s", sensor_data.state)
+        _LOGGER.debug(" sensor attr available : %s", sensor_data.attr_available)
+        _LOGGER.debug(" sensor attributes : %s", sensor_data.extra_state_attributes)
         self._state = sensor_data.state
         self._attr_available = sensor_data.attr_available
         self._attr_extra_state_attributes = sensor_data.extra_state_attributes
@@ -300,12 +304,16 @@ class BrewfatherSensor(CoordinatorEntity[BrewfatherCoordinator], SensorEntity):
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         """Update Sensor Entity."""
-        _LOGGER.debug(" _handle_coordinator_update Updating state of the sensors.")
+        _LOGGER.debug(" _handle_coordinator_update | Updating state of the sensors : %s", self._sensor_type.name)
         #await self.coordinator.async_request_refresh()
         brewfatherCoordinator: BrewfatherCoordinator = self.coordinator
         sensor_data = self._refresh_sensor_data(brewfatherCoordinator.data, self._sensor_type, self.device_class, self.entity_id)
+        _LOGGER.debug(" sensor state : %s", sensor_data.state)
+        _LOGGER.debug(" sensor attr available : %s", sensor_data.attr_available)
+        _LOGGER.debug(" sensor attributes : %s", sensor_data.extra_state_attributes)
         self._state = sensor_data.state
         self._attr_available = sensor_data.attr_available
+        self._attr_extra_state_attributes = sensor_data.extra_state_attributes
         self.async_write_ha_state()
 
     @staticmethod
