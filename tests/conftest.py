@@ -18,6 +18,14 @@ class _GenericEntity:
         self.device_class = None
 
 
+class _CoordinatorEntity(_GenericEntity):
+    """Minimal CoordinatorEntity stub."""
+
+
+class _SensorEntity(_GenericEntity):
+    """Minimal SensorEntity stub."""
+
+
 class _DataUpdateCoordinator:
     """Minimal generic DataUpdateCoordinator stub."""
 
@@ -82,7 +90,7 @@ def mock_dependencies():
     ha_exceptions.HomeAssistantError = Exception
     ha_exceptions.ConfigEntryNotReady = RuntimeError
 
-    ha_update_coordinator.CoordinatorEntity = _GenericEntity
+    ha_update_coordinator.CoordinatorEntity = _CoordinatorEntity
     ha_update_coordinator.DataUpdateCoordinator = _DataUpdateCoordinator
     ha_update_coordinator.UpdateFailed = RuntimeError
 
@@ -90,7 +98,7 @@ def mock_dependencies():
     ha_entity_platform.AddEntitiesCallback = MagicMock
     ha_typing.StateType = object
 
-    ha_sensor.SensorEntity = _GenericEntity
+    ha_sensor.SensorEntity = _SensorEntity
     ha_sensor.SensorEntityDescription = _SensorEntityDescription
     ha_sensor.SensorStateClass = MagicMock(MEASUREMENT="measurement")
     ha_sensor.SensorDeviceClass = MagicMock(
