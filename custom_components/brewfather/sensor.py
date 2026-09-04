@@ -6,7 +6,7 @@ import logging
 from typing import cast, Any
 from homeassistant.core import callback
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfTemperature
+from homeassistant.const import UnitOfTemperature, PERCENTAGE
 from homeassistant.components.sensor import SensorEntity, SensorStateClass, SensorEntityDescription, SensorDeviceClass
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -234,6 +234,76 @@ async def async_setup_entry(
         )
     )
 
+    sensors.extend([
+        BrewfatherSensor(
+            coordinator,
+            SensorKinds.brewtracker_status,
+            SensorEntityDescription(
+                key="brewtracker_status",
+                name="Brew Tracker status",
+                icon="mdi:timeline-clock",
+            )
+        ),
+        BrewfatherSensor(
+            coordinator,
+            SensorKinds.brewtracker_stage,
+            SensorEntityDescription(
+                key="brewtracker_stage",
+                name="Brew Tracker stage",
+                icon="mdi:clipboard-list",
+            )
+        ),
+        BrewfatherSensor(
+            coordinator,
+            SensorKinds.brewtracker_step,
+            SensorEntityDescription(
+                key="brewtracker_step",
+                name="Brew Tracker step",
+                icon="mdi:format-list-checks",
+            )
+        ),
+        BrewfatherSensor(
+            coordinator,
+            SensorKinds.brewtracker_progress,
+            SensorEntityDescription(
+                key="brewtracker_progress",
+                name="Brew Tracker progress",
+                icon="mdi:progress-clock",
+                native_unit_of_measurement=PERCENTAGE,
+                state_class=SensorStateClass.MEASUREMENT,
+            )
+        ),
+        BrewfatherSensor(
+            coordinator,
+            SensorKinds.brewtracker_time_remaining,
+            SensorEntityDescription(
+                key="brewtracker_time_remaining",
+                name="Brew Tracker time remaining",
+                icon="mdi:timer-sand",
+                native_unit_of_measurement="s",
+                state_class=SensorStateClass.MEASUREMENT,
+            )
+        ),
+        BrewfatherSensor(
+            coordinator,
+            SensorKinds.brewtracker_next_step,
+            SensorEntityDescription(
+                key="brewtracker_next_step",
+                name="Brew Tracker next step",
+                icon="mdi:skip-next",
+            )
+        ),
+        BrewfatherSensor(
+            coordinator,
+            SensorKinds.brewtracker_raw,
+            SensorEntityDescription(
+                key="brewtracker_raw",
+                name="Brew Tracker raw",
+                icon="mdi:database-search",
+            )
+        ),
+    ])
+
     async_add_entities(sensors, update_before_add=False)
 
 
@@ -315,6 +385,109 @@ class BrewfatherSensor(CoordinatorEntity[BrewfatherCoordinator], SensorEntity):
         self._attr_available = sensor_data.attr_available
         self._attr_extra_state_attributes = sensor_data.extra_state_attributes
         self.async_write_ha_state()
+
+    @staticmethod
+    def _stage(tracker: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(tracker, dict):
+            return None
+        stages = tracker.get("stages") or []
+        index = tracker.get("stage")
+        return stages[index] if isinstance(index, int) and 0 <= index < len(stages) and isinstance(stages[index], dict) else None
+
+    @staticmethod
+    def _step(stage: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(stage, dict):
+            return None
+        steps = stage.get("steps") or []
+        index = stage.get("step")
+        if isinstance(index, int) and 0 <= index < len(steps) and isinstance(steps[index], dict):
+            return steps[index]
+        return next((step for step in steps if isinstance(step, dict) and step.get("active") is True), None)
+
+    @staticmethod
+    def _next(stage: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(stage, dict):
+            return None
+        steps = stage.get("steps") or []
+        index = stage.get("step")
+        if isinstance(index, int) and 0 <= index + 1 < len(steps) and isinstance(steps[index + 1], dict):
+            return steps[index + 1]
+        step = BrewfatherSensor._step(stage)
+        if step is None:
+            return None
+        try:
+            i = steps.index(step)
+        except ValueError:
+            return None
+        return steps[i + 1] if i + 1 < len(steps) and isinstance(steps[i + 1], dict) else None
+
+    @staticmethod
+    def _remaining(stage: dict[str, Any] | None) -> float | None:
+        if not isinstance(stage, dict):
+            return None
+        duration = stage.get("duration")
+        position = stage.get("position")
+        start = stage.get("start")
+        if duration is None:
+            return position
+        if stage.get("paused") is True and position is not None:
+            return min(max(float(position), 0), float(duration))
+        if start is None:
+            return None if position is None else min(max(float(position), 0), float(duration))
+        elapsed = max((datetime.now(timezone.utc).timestamp() * 1000 - float(start)) / 1000, 0)
+        return min(max(float(duration) - elapsed, 0), float(duration))
+
+    @staticmethod
+    def _progress(stage: dict[str, Any] | None) -> float | None:
+        if not isinstance(stage, dict) or not stage.get("duration"):
+            return None
+        remaining = BrewfatherSensor._remaining(stage)
+        if remaining is None:
+            return None
+        duration = float(stage["duration"])
+        return round(min(max(((duration - remaining) / duration) * 100, 0), 100), 1)
+
+    @staticmethod
+    def _status(tracker: dict[str, Any] | None) -> str:
+        if not isinstance(tracker, dict) or tracker.get("enabled") is not True or not tracker.get("stages"):
+            return "inactive"
+        if tracker.get("completed") is True:
+            return "completed"
+        stage = BrewfatherSensor._stage(tracker)
+        return "paused" if isinstance(stage, dict) and stage.get("paused") is True else "running"
+
+    @staticmethod
+    def _base_attrs(data: BrewfatherCoordinatorData, tracker: dict[str, Any] | None) -> dict[str, Any]:
+        stage = BrewfatherSensor._stage(tracker)
+        step = BrewfatherSensor._step(stage)
+        next_step = BrewfatherSensor._next(stage)
+        attrs = {
+            "batch_id": data.batch_id,
+            "brew_tracker_batch_id": data.brew_tracker_batch_id,
+            "brew_tracker_batch_name": data.brew_tracker_batch_name,
+            "brew_tracker_recipe_name": data.brew_tracker_recipe_name,
+            "brew_tracker_batch_status": data.brew_tracker_batch_status,
+            "active": BrewfatherSensor._status(tracker) != "inactive",
+        }
+        if isinstance(tracker, dict):
+            attrs.update({
+                "tracker_id": tracker.get("_id"),
+                "enabled": tracker.get("enabled"),
+                "completed": tracker.get("completed"),
+                "status": BrewfatherSensor._status(tracker),
+                "stage_index": tracker.get("stage"),
+                "stage_count": len(tracker.get("stages") or []),
+            })
+        if stage is not None:
+            stage_copy = dict(stage)
+            stage_copy["remainingSeconds"] = BrewfatherSensor._remaining(stage)
+            stage_copy["progressPercent"] = BrewfatherSensor._progress(stage)
+            attrs["current_stage"] = stage_copy
+        if step is not None:
+            attrs["current_step"] = step
+        if next_step is not None:
+            attrs["next_step"] = next_step
+        return attrs
 
     @staticmethod
     def _refresh_sensor_data(
@@ -503,6 +676,41 @@ class BrewfatherSensor(CoordinatorEntity[BrewfatherCoordinator], SensorEntity):
                 if len(other_batches_data)  > 0:
                     custom_attributes["other_batches"] = other_batches_data
 
+        elif sensor_type in {
+            SensorKinds.brewtracker_status,
+            SensorKinds.brewtracker_stage,
+            SensorKinds.brewtracker_step,
+            SensorKinds.brewtracker_progress,
+            SensorKinds.brewtracker_time_remaining,
+            SensorKinds.brewtracker_next_step,
+            SensorKinds.brewtracker_raw,
+        }:
+            tracker = data.brew_tracker
+            stage = BrewfatherSensor._stage(tracker)
+            step = BrewfatherSensor._step(stage)
+            next_step = BrewfatherSensor._next(stage)
+            custom_attributes = BrewfatherSensor._base_attrs(data, tracker)
+
+            if sensor_type == SensorKinds.brewtracker_status:
+                sensor_data.state = BrewfatherSensor._status(tracker)
+            elif sensor_type == SensorKinds.brewtracker_stage and stage is not None:
+                sensor_data.state = stage.get("name")
+            elif sensor_type == SensorKinds.brewtracker_step and step is not None:
+                sensor_data.state = step.get("name")
+            elif sensor_type == SensorKinds.brewtracker_progress:
+                sensor_data.state = BrewfatherSensor._progress(stage)
+            elif sensor_type == SensorKinds.brewtracker_time_remaining:
+                remaining = BrewfatherSensor._remaining(stage)
+                sensor_data.state = round(remaining) if remaining is not None else None
+            elif sensor_type == SensorKinds.brewtracker_next_step and next_step is not None:
+                sensor_data.state = next_step.get("name")
+            elif sensor_type == SensorKinds.brewtracker_raw:
+                sensor_data.state = BrewfatherSensor._status(tracker)
+                custom_attributes["data"] = tracker
+
+            if sensor_data.state is None:
+                sensor_data.attr_available = False
+
         sensor_data.extra_state_attributes = custom_attributes
 
         # Received a datetime
@@ -543,3 +751,10 @@ class SensorKinds(enum.Enum):
     fermenting_start_date = 8
     batch_notes = 9
     events = 10
+    brewtracker_status = 11
+    brewtracker_stage = 12
+    brewtracker_step = 13
+    brewtracker_progress = 14
+    brewtracker_time_remaining = 15
+    brewtracker_next_step = 16
+    brewtracker_raw = 17
