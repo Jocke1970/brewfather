@@ -5,10 +5,12 @@ UPDATE_INTERVAL = 900 #15 minutes
 MS_IN_DAY = 86400000
 
 TEST_URI = "https://api.brewfather.app/v2/batches/"
+ALL_BATCHES_URI = "https://api.brewfather.app/v2/batches/"
 BATCHES_URI = "https://api.brewfather.app/v2/batches/?status=Fermenting"
 BATCH_URI = "https://api.brewfather.app/v2/batches/{}?include=recipe.fermentation,notes,measuredOg,batchNotes,events"
 READINGS_URI = "https://api.brewfather.app/v2/batches/{}/readings"
 LAST_READING_URI = "https://api.brewfather.app/v2/batches/{}/readings/last"
+BREWTRACKER_URI = "https://api.brewfather.app/v2/batches/{}/brewtracker"
 LOG_CUSTOM_STREAM = "http://log.brewfather.net/stream?id={}"
 
 DRY_RUN = False
