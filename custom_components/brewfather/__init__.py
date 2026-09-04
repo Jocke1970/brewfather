@@ -1,10 +1,14 @@
 """The Brewfather integration."""
 from __future__ import annotations
+
+import asyncio
 import logging
-from homeassistant import config_entries, core
 from datetime import timedelta
+
+from homeassistant import config_entries, core
 from homeassistant.exceptions import ConfigEntryNotReady 
 from homeassistant.const import Platform 
+from homeassistant.helpers.event import async_track_state_change_event
 
 from .coordinator import BrewfatherCoordinator
 from .const import (
@@ -24,6 +28,53 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.SENSOR, Platform.CALENDAR]
 
+BREW_TRACKER_STATUS_ENTITY = "sensor.brewfather_brew_tracker_status"
+BREW_TRACKER_RESUME_FROM_STATES = {"paused", "pausing"}
+BREW_TRACKER_RESUME_TO_STATES = {"running"}
+BREW_TRACKER_RESUME_SECOND_REFRESH_DELAY_SECONDS = 8
+
+
+def _norm_state(value) -> str:
+    return str(value or "").strip().lower()
+
+
+def _setup_brew_tracker_resume_refresh(
+    hass: core.HomeAssistant,
+    coordinator: BrewfatherCoordinator,
+):
+    """Refresh Brewfather quickly when Brew Tracker resumes."""
+
+    async def _delayed_refresh() -> None:
+        await asyncio.sleep(BREW_TRACKER_RESUME_SECOND_REFRESH_DELAY_SECONDS)
+        _LOGGER.debug(
+            "Brew Tracker resume detected; requesting delayed Brewfather refresh"
+        )
+        await coordinator.async_request_refresh()
+
+    async def _handle_status_change(event) -> None:
+        old_state = event.data.get("old_state")
+        new_state = event.data.get("new_state")
+        old = _norm_state(old_state.state if old_state is not None else None)
+        new = _norm_state(new_state.state if new_state is not None else None)
+
+        if old not in BREW_TRACKER_RESUME_FROM_STATES or new not in BREW_TRACKER_RESUME_TO_STATES:
+            return
+
+        _LOGGER.debug(
+            "Brew Tracker status changed %s -> %s; requesting immediate Brewfather refresh",
+            old,
+            new,
+        )
+        await coordinator.async_request_refresh()
+        hass.async_create_task(_delayed_refresh())
+
+    return async_track_state_change_event(
+        hass,
+        [BREW_TRACKER_STATUS_ENTITY],
+        _handle_status_change,
+    )
+
+
 async def async_setup_entry(hass: core.HomeAssistant, config_entry: config_entries.ConfigEntry) -> bool:
     # """Setup our skeleton component."""
 
@@ -32,6 +83,9 @@ async def async_setup_entry(hass: core.HomeAssistant, config_entry: config_entri
 
     #Signal updates from options flow
     config_entry.async_on_unload(config_entry.add_update_listener(options_update_listener))
+
+    # Refresh Brewfather as soon as Brew Tracker resumes from pause.
+    config_entry.async_on_unload(_setup_brew_tracker_resume_refresh(hass, coordinator))
 
     # On Home Assistant startup we want to grab data so all sensors are running and up to date 
     #await coordinator.async_refresh()
