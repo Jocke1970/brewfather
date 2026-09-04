@@ -58,6 +58,7 @@ jobs:
       - name: Check YAML
         run: |
           check-yaml --unsafe .github/workflows/brewtracker-watchdogs.yml
+          check-yaml --unsafe .github/workflows/brewtracker-codeql.yml
           check-yaml --unsafe .github/workflows/hassfest.yaml
           check-yaml --unsafe .github/workflows/hacs-action.yml
           check-yaml --unsafe .github/workflows/tests.yml
@@ -134,7 +135,7 @@ jobs:
           PY
 
   tests:
-    name: Existing pytest (${{ matrix.python-version }})
+    name: Pytest (${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -154,5 +155,5 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
-      - name: Run existing tests
-        run: pytest tests/test_batch_item.py -q
+      - name: Run baseline and BrewTracker tests
+        run: pytest tests/test_batch_item.py tests/test_brewtracker.py -q
