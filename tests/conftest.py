@@ -14,6 +14,7 @@ def mock_dependencies():
     mock_ha.exceptions = MagicMock()
     mock_ha.helpers = MagicMock()
     mock_ha.helpers.update_coordinator = MagicMock()
+    mock_ha.helpers.event = MagicMock()
     
     sys.modules['homeassistant'] = mock_ha
     sys.modules['homeassistant.const'] = mock_ha.const
@@ -22,10 +23,10 @@ def mock_dependencies():
     sys.modules['homeassistant.exceptions'] = mock_ha.exceptions
     sys.modules['homeassistant.helpers'] = mock_ha.helpers
     sys.modules['homeassistant.helpers.update_coordinator'] = mock_ha.helpers.update_coordinator
+    sys.modules['homeassistant.helpers.event'] = mock_ha.helpers.event
     
     # External libraries used by the integration
     sys.modules['aiohttp'] = MagicMock()
 
 # Mock dependencies before any imports happen
 mock_dependencies()
-
