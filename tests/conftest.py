@@ -79,6 +79,7 @@ def mock_dependencies():
     ha_core.HomeAssistant = MagicMock
     ha_core.callback = _callback
     ha_config_entries.ConfigEntry = MagicMock
+    ha_exceptions.HomeAssistantError = Exception
     ha_exceptions.ConfigEntryNotReady = RuntimeError
 
     ha_update_coordinator.CoordinatorEntity = _GenericEntity
