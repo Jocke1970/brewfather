@@ -27,6 +27,24 @@ def _tracker(*, paused=False, completed=False):
     }
 
 
+def _tracker_with_next_stage(*, paused=False):
+    tracker = _tracker(paused=paused)
+    tracker["stages"].append(
+        {
+            "name": "Boil",
+            "step": 0,
+            "paused": False,
+            "duration": 3600,
+            "position": 3600,
+            "steps": [
+                {"name": "Start boil"},
+                {"name": "Hop addition"},
+            ],
+        }
+    )
+    return tracker
+
+
 def _data(tracker):
     data = BrewfatherCoordinatorData()
     data.batch_id = "batch-1"
@@ -58,7 +76,26 @@ def test_stage_step_and_next_step_selection():
 
     assert stage["name"] == "Mash"
     assert BrewfatherSensor._step(stage)["name"] == "Heat strike water"
-    assert BrewfatherSensor._next(stage)["name"] == "Dough-in"
+    assert BrewfatherSensor._next(tracker)["name"] == "Dough-in"
+
+
+def test_next_step_crosses_stage_boundary_and_stops_at_end():
+    tracker = _tracker_with_next_stage()
+    tracker["stages"][0]["step"] = 1
+
+    assert BrewfatherSensor._next(tracker)["name"] == "Start boil"
+
+    data = _data(tracker)
+    next_step = BrewfatherSensor._refresh_sensor_data(
+        data, SensorKinds.brewtracker_next_step, None, "test_next_cross_stage"
+    )
+    assert next_step.state == "Start boil"
+    assert next_step.attr_available is True
+    assert next_step.extra_state_attributes["next_step"]["name"] == "Start boil"
+
+    tracker["stage"] = 1
+    tracker["stages"][1]["step"] = 1
+    assert BrewfatherSensor._next(tracker) is None
 
 
 def test_paused_remaining_and_progress_are_stable():
