@@ -4,8 +4,9 @@ from logging import DEBUG
 from copy import copy
 from datetime import datetime, timezone, timedelta
 import math
-from typing import Optional
+from typing import Optional, Any
 from .connection import Connection
+from .models.batches_item import BatchesItemElement
 from .models.batch_item import (
     Fermentation,
     BatchItem,
@@ -46,6 +47,11 @@ class BrewfatherCoordinatorData:
     start_date: Optional[datetime.datetime]
     batch_notes: Optional[str]
     events: Optional[list[Event]]
+    brew_tracker: Optional[dict[str, Any]]
+    brew_tracker_batch_id: Optional[str]
+    brew_tracker_batch_name: Optional[str]
+    brew_tracker_recipe_name: Optional[str]
+    brew_tracker_batch_status: Optional[str]
 
     def __init__(self):
         # set defaults to None
@@ -60,17 +66,24 @@ class BrewfatherCoordinatorData:
         self.start_date = None
         self.batch_notes = None
         self.events = None
+        self.brew_tracker = None
+        self.brew_tracker_batch_id = None
+        self.brew_tracker_batch_name = None
+        self.brew_tracker_recipe_name = None
+        self.brew_tracker_batch_status = None
 
 
 class BatchInfo:
     batch: BatchItem
     #readings: list[Reading]
     last_reading: Reading
+    brew_tracker: dict[str, Any] | None
     
     #def __init__(self, batch: BatchItem, readings: list[Reading]):
-    def __init__(self, batch: BatchItem, last_reading: Reading):
+    def __init__(self, batch: BatchItem, last_reading: Reading, brew_tracker: dict[str, Any] | None):
         self.batch = batch
         self.last_reading = last_reading
+        self.brew_tracker = brew_tracker
 
 class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
     """Class to manage fetching data from the API."""
@@ -127,7 +140,8 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
         for batch in allBatches:
             batchData = await self.connection.get_batch(batch.id)
             last_reading = await self.connection.get_last_reading(batch.id)
-            fermentingBatches.append(BatchInfo(batchData, last_reading))
+            brew_tracker = await self.connection.get_brewtracker(batch.id)
+            fermentingBatches.append(BatchInfo(batchData, last_reading, brew_tracker))
 
             if self.all_batch_info_sensor:
                 readings = await self.connection.get_readings(batch.id)
@@ -137,15 +151,15 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
                 all_batches_data.append(all_batch_data)
             elif not self.multi_batch_mode:
                 break
-
-        if len(fermentingBatches) == 0:
-            return None
         
         currentTimeUtc = datetime.now().astimezone()
         main_batch_data: BrewfatherCoordinatorData = None
         #batch_data:list[BrewfatherCoordinatorData] = []
         for fermenting_batch in fermentingBatches:
             batch_data = self.get_batch_data(fermenting_batch, currentTimeUtc)
+
+            if batch_data is None:
+                continue
             
             if main_batch_data is None:
                 main_batch_data = batch_data
@@ -154,17 +168,69 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
                     main_batch_data.other_batches.append(batch_data)
                 else:
                     break
+
+        if main_batch_data is None:
+            main_batch_data = BrewfatherCoordinatorData()
         
         if self.all_batch_info_sensor:
             main_batch_data.all_batches_data = all_batches_data
+
+        await self.add_brewtracker_discovery_data(main_batch_data, allBatches)
             
         return main_batch_data
+
+    async def add_brewtracker_discovery_data(
+        self,
+        data: BrewfatherCoordinatorData,
+        fermenting_batches: list[BatchesItemElement],
+    ) -> None:
+        """Find an active Brew Tracker even when no batch is currently fermenting."""
+        if self._brewtracker_active(data.brew_tracker):
+            data.brew_tracker_batch_id = data.batch_id
+            data.brew_tracker_recipe_name = data.brew_name
+            return
+
+        checked_batch_ids = {batch.id for batch in fermenting_batches if batch.id is not None}
+        all_batches = await self.connection.get_all_batches()
+
+        for batch in all_batches:
+            if batch.id is None or batch.id in checked_batch_ids:
+                continue
+
+            brew_tracker = await self.connection.get_brewtracker(batch.id)
+            if not self._brewtracker_active(brew_tracker):
+                continue
+
+            data.brew_tracker = brew_tracker
+            data.brew_tracker_batch_id = batch.id
+            data.brew_tracker_batch_name = batch.name
+            data.brew_tracker_recipe_name = batch.recipe.name if batch.recipe is not None else None
+            data.brew_tracker_batch_status = batch.status
+
+            if data.batch_id is None:
+                data.batch_id = batch.id
+            if data.brew_name is None and batch.recipe is not None:
+                data.brew_name = batch.recipe.name
+
+            _LOGGER.debug(
+                "Active Brew Tracker found on batch %s (%s)",
+                data.brew_tracker_batch_id,
+                data.brew_tracker_recipe_name,
+            )
+            return
+
+    @staticmethod
+    def _brewtracker_active(brew_tracker: dict[str, Any] | None) -> bool:
+        if not isinstance(brew_tracker, dict):
+            return False
+        return brew_tracker.get("enabled") is True and len(brew_tracker.get("stages") or []) > 0
     
     def get_batch_data(self, currentBatch: BatchInfo, currentTimeUtc: datetime) -> BrewfatherCoordinatorData | None:
         fermenting_start: int | None = None
-        for note in currentBatch.batch.notes:
-            if note.status == "Fermenting":
-                fermenting_start = note.timestamp
+        if currentBatch.batch.notes is not None:
+            for note in currentBatch.batch.notes:
+                if note.status == "Fermenting":
+                    fermenting_start = note.timestamp
         
         if fermenting_start is None:
             return None
@@ -217,6 +283,11 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
         data.start_date = self.datetime_fromtimestamp(fermenting_start)
         data.batch_notes = currentBatch.batch.batch_notes
         data.events = currentBatch.batch.events
+        data.brew_tracker = currentBatch.brew_tracker
+        data.brew_tracker_batch_id = currentBatch.batch.id
+        data.brew_tracker_batch_name = currentBatch.batch.name
+        data.brew_tracker_recipe_name = currentBatch.batch.recipe.name if currentBatch.batch.recipe is not None else None
+        data.brew_tracker_batch_status = currentBatch.batch.status
 
         # if currentBatch.readings is not None and len(currentBatch.readings) > 0:
         #     data.last_reading = sorted(currentBatch.readings, key=lambda r: r.time, reverse=True)[0]
