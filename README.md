@@ -36,7 +36,7 @@ The extension currently adds:
 - Brew Tracker status.
 - Current stage.
 - Current step.
-- Next step.
+- Next logical step, including transition from the last step of one stage to the first step of the next stage.
 - Progress.
 - Remaining time.
 - Raw Brew Tracker payload.
@@ -66,6 +66,8 @@ Those concerns belong downstream, for example in BrewAssistant.
 
 ## Branch model
 
+The public branch model in this fork is intentionally kept simple:
+
 ```text
 main         = selected Brewfather base / upstream-oriented branch
 brewtracker  = main + BrewTracker extension
@@ -74,6 +76,14 @@ brewtracker  = main + BrewTracker extension
 BrewTracker development belongs on the `brewtracker` branch. `main` should not receive BrewTracker-specific code.
 
 Upstream Brewfather updates are intentionally handled separately. A Brewfather update should not be pulled into `main` merely because BrewTracker is being changed.
+
+Recovery and known-good history are kept out of the normal branch list:
+
+- Selected Brewfather base at the 2026-09-04 migration: `a1abb5aa0bba21cfa95453f96bb96a3746ba4f39`
+- Runtime-verified BrewTracker known-good commit: `30a789d11d1dd1f3b7c9a0cb1987df6c675e5c13`
+- Exact pre-migration Home Assistant rescue snapshot: archived repository `Jocke1970/brewfather-brewtracker-lab`, branch `rescue/ha-pre-brewtracker-20260904`, commit `67e40f4a450db2a50bc00ff1cab5f1863420be81`
+
+This keeps the active fork easy to understand for visitors while preserving precise recovery points.
 
 ## Installation
 
@@ -110,16 +120,30 @@ It documents:
 - why each BrewTracker modification exists
 - watchdog, test, CodeQL and hassfest validation
 - update / sync procedure
-- runtime verification
-- known-good and recovery policy
+- practical Home Assistant runtime verification
+- known-good commit and recovery policy
 
 If the actual `main..brewtracker` diff changes, `docs/BREWTRACKER.md` should be updated before the branch is treated as a new known-good baseline.
 
+## Runtime-verified baseline
+
+The current practical known-good baseline was verified in Home Assistant on 2026-09-04:
+
+```text
+commit: 30a789d11d1dd1f3b7c9a0cb1987df6c675e5c13
+```
+
+The verification included integration startup, all seven BrewTracker sensors, discovery while a batch was still in `Planning`, transition to `Brewing`, paused/running states, progress and remaining time, next-step handling within a stage and across a stage boundary, the Mash → Boil transition, and downstream BrewAssistant consumption.
+
+The previous lab repository has been retired from active development and retained only as an archived historical/recovery source.
+
 ## Historical baseline
 
-The BrewTracker implementation was previously developed and practically verified in the private `brewfather-brewtracker-lab` repository. The verified 2026-06-11 implementation was used as the migration source when BrewTracker was moved into this repository as a long-lived branch.
+BrewTracker was originally developed and practically verified in `Jocke1970/brewfather-brewtracker-lab`. That repository is now archived.
 
-The migration deliberately ports BrewTracker functionality onto the selected Brewfather base rather than silently updating the underlying Brewfather integration.
+Its historical 2026-06-11 known-good implementation and later resume-refresh patch were used as migration sources when BrewTracker was moved into this repository as a long-lived branch.
+
+The migration deliberately ported BrewTracker functionality onto the selected Brewfather base rather than silently updating the underlying Brewfather integration.
 
 ## License and attribution
 
