@@ -28,7 +28,10 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.SENSOR, Platform.CALENDAR]
 
-BREW_TRACKER_STATUS_ENTITY = "sensor.brewfather_brew_tracker_status"
+BREW_TRACKER_STATUS_ENTITIES = [
+    "sensor.brewfather_brew_tracker_status",
+    "sensor.brewfather_brewtracker_status",
+]
 BREW_TRACKER_RESUME_FROM_STATES = {"paused", "pausing"}
 BREW_TRACKER_RESUME_TO_STATES = {"running"}
 BREW_TRACKER_RESUME_SECOND_REFRESH_DELAY_SECONDS = 8
@@ -70,7 +73,7 @@ def _setup_brew_tracker_resume_refresh(
 
     return async_track_state_change_event(
         hass,
-        [BREW_TRACKER_STATUS_ENTITY],
+        BREW_TRACKER_STATUS_ENTITIES,
         _handle_status_change,
     )
 
