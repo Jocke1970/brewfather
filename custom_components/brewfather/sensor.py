@@ -405,21 +405,41 @@ class BrewfatherSensor(CoordinatorEntity[BrewfatherCoordinator], SensorEntity):
         return next((step for step in steps if isinstance(step, dict) and step.get("active") is True), None)
 
     @staticmethod
-    def _next(stage: dict[str, Any] | None) -> dict[str, Any] | None:
+    def _next(tracker: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Return the next logical Brew Tracker step, crossing stage boundaries."""
+        stage = BrewfatherSensor._stage(tracker)
         if not isinstance(stage, dict):
             return None
+
         steps = stage.get("steps") or []
         index = stage.get("step")
         if isinstance(index, int) and 0 <= index + 1 < len(steps) and isinstance(steps[index + 1], dict):
             return steps[index + 1]
+
         step = BrewfatherSensor._step(stage)
-        if step is None:
+        if step is not None:
+            try:
+                i = steps.index(step)
+            except ValueError:
+                i = -1
+            if i >= 0 and i + 1 < len(steps) and isinstance(steps[i + 1], dict):
+                return steps[i + 1]
+
+        if not isinstance(tracker, dict):
             return None
-        try:
-            i = steps.index(step)
-        except ValueError:
+        stages = tracker.get("stages") or []
+        stage_index = tracker.get("stage")
+        if not isinstance(stage_index, int):
             return None
-        return steps[i + 1] if i + 1 < len(steps) and isinstance(steps[i + 1], dict) else None
+
+        for next_stage in stages[stage_index + 1:]:
+            if not isinstance(next_stage, dict):
+                continue
+            for candidate in next_stage.get("steps") or []:
+                if isinstance(candidate, dict):
+                    return candidate
+
+        return None
 
     @staticmethod
     def _remaining(stage: dict[str, Any] | None) -> float | None:
@@ -460,7 +480,7 @@ class BrewfatherSensor(CoordinatorEntity[BrewfatherCoordinator], SensorEntity):
     def _base_attrs(data: BrewfatherCoordinatorData, tracker: dict[str, Any] | None) -> dict[str, Any]:
         stage = BrewfatherSensor._stage(tracker)
         step = BrewfatherSensor._step(stage)
-        next_step = BrewfatherSensor._next(stage)
+        next_step = BrewfatherSensor._next(tracker)
         attrs = {
             "batch_id": data.batch_id,
             "brew_tracker_batch_id": data.brew_tracker_batch_id,
@@ -688,7 +708,7 @@ class BrewfatherSensor(CoordinatorEntity[BrewfatherCoordinator], SensorEntity):
             tracker = data.brew_tracker
             stage = BrewfatherSensor._stage(tracker)
             step = BrewfatherSensor._step(stage)
-            next_step = BrewfatherSensor._next(stage)
+            next_step = BrewfatherSensor._next(tracker)
             custom_attributes = BrewfatherSensor._base_attrs(data, tracker)
 
             if sensor_type == SensorKinds.brewtracker_status:
