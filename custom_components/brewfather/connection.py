@@ -1,6 +1,6 @@
 from __future__ import annotations
 import logging
-from typing import List, TypeVar, Callable
+from typing import List, TypeVar, Callable, Any
 import aiohttp # type: ignore
 import json
 from homeassistant import exceptions
@@ -11,12 +11,14 @@ from .models.custom_stream_data import custom_stream_data
 
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from .const import (
+    ALL_BATCHES_URI,
     BATCHES_URI,
     TEST_URI,
     BATCH_URI,
     READINGS_URI,
     DRY_RUN,
     LAST_READING_URI,
+    BREWTRACKER_URI,
     LOG_CUSTOM_STREAM
 )
 from .testdata import (
@@ -90,6 +92,14 @@ class Connection:
             batch = await self.get_api_response(url, batches_item_from_dict)
             return batch
 
+    async def get_all_batches(self) -> List[BatchesItemElement]:
+        url = ALL_BATCHES_URI
+        if DRY_RUN:
+            return batches_item_from_dict(json.loads(TESTDATA_BATCHES))
+        else:
+            batches = await self.get_api_response(url, batches_item_from_dict)
+            return batches
+
     async def get_batch(self, batchId: str, testData=TESTDATA_BATCH_3) -> BatchItem:
         url = BATCH_URI.format(batchId)
         if DRY_RUN:
@@ -114,6 +124,12 @@ class Connection:
         else:
             reading = await self.get_api_response(url, Reading.from_dict, accept_404 = True)
             return reading
+
+    async def get_brewtracker(self, batchId: str) -> dict[str, Any] | None:
+        url = BREWTRACKER_URI.format(batchId)
+        if DRY_RUN:
+            return None
+        return await self.get_api_response(url, lambda data: data, accept_404 = True)
         
     async def post_custom_stream(self, logging_id: str, data:custom_stream_data) -> bool:
         url = LOG_CUSTOM_STREAM.format(logging_id)
