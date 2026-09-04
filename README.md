@@ -101,13 +101,19 @@ batches:read
 
 ## Technical documentation
 
-See [`docs/BREWTRACKER.md`](docs/BREWTRACKER.md) for:
+[`docs/BREWTRACKER.md`](docs/BREWTRACKER.md) is the **authoritative technical source of truth for the intentional `main` → `brewtracker` delta**, including reconstruction, maintenance, validation and recovery information.
+
+It documents:
 
 - architecture and design boundary
-- exact local delta from the Brewfather base
+- complete file-by-file delta from the selected Brewfather base
+- why each BrewTracker modification exists
+- watchdog, test, CodeQL and hassfest validation
 - update / sync procedure
 - runtime verification
-- recovery notes
+- known-good and recovery policy
+
+If the actual `main..brewtracker` diff changes, `docs/BREWTRACKER.md` should be updated before the branch is treated as a new known-good baseline.
 
 ## Historical baseline
 
