@@ -2,7 +2,7 @@
 
 > **Single source of truth:** this document describes the intentional delta between the selected Brewfather base on `main` and the BrewTracker extension on `brewtracker`.
 >
-> If `git diff main..brewtracker` and this document disagree, the documentation must be updated before the branch is treated as a new known-good baseline.
+> If `git diff main..brewtracker` and this document disagree, update this document before treating the branch as a new known-good baseline.
 
 ## Purpose
 
@@ -16,7 +16,9 @@ The original Brewfather integration is created and maintained by **MvdDonk**:
 
 This extension does not replace the upstream project's authorship or general documentation. It adds access to Brewfather Brew Tracker runtime data for Home Assistant consumers such as dashboards, automations and BrewAssistant.
 
-## Branch architecture
+## Public branch architecture
+
+The fork intentionally keeps its normal branch model simple:
 
 ```text
 Jocke1970/brewfather
@@ -42,15 +44,33 @@ Jocke1970/brewfather
 - Upstream Brewfather updates are a separate maintenance decision.
 - BrewTracker validation and documentation belong on `brewtracker`, not on `main`.
 
-At the 2026-09-04 migration, `brewtracker` was deliberately based on the existing `main` commit rather than updating Brewfather first.
+Recovery and historical known-good references are intentionally kept out of the normal branch list so the fork remains easy to understand for visitors.
 
-Selected base at migration:
+### Fixed reference points
+
+Selected Brewfather base at the 2026-09-04 migration:
 
 ```text
 main commit: a1abb5aa0bba21cfa95453f96bb96a3746ba4f39
 ```
 
-This base was intentionally retained because the available upstream Brewfather update was not considered necessary for the current use case.
+Runtime-verified BrewTracker known-good code commit:
+
+```text
+brewtracker code commit: 30a789d11d1dd1f3b7c9a0cb1987df6c675e5c13
+verified: 2026-09-04
+```
+
+Exact pre-migration Home Assistant rescue snapshot:
+
+```text
+repository: Jocke1970/brewfather-brewtracker-lab
+branch: rescue/ha-pre-brewtracker-20260904
+commit: 67e40f4a450db2a50bc00ff1cab5f1863420be81
+status: archived / recovery only
+```
+
+The `brewtracker` branch may contain later documentation-only commits while the runtime-known-good code reference remains the exact commit above.
 
 ## Design boundary
 
@@ -90,7 +110,7 @@ BrewTracker does **not** own:
 
 ## BrewTracker delta overview
 
-The complete intentional delta from the selected `main` base currently consists of the following files.
+The intentional delta from the selected `main` base currently consists of the following files.
 
 ### Modified relative to `main`
 
@@ -113,7 +133,7 @@ docs/BREWTRACKER.md
 tests/test_brewtracker.py
 ```
 
-No BrewTracker-specific change is currently intended in:
+No BrewTracker-specific change is intended in:
 
 ```text
 custom_components/brewfather/manifest.json
@@ -131,20 +151,21 @@ The upstream README documents the original Brewfather Integration for Home Assis
 
 **BrewTracker addition**
 
-The `brewtracker` branch README is branch-specific and explains:
+The `brewtracker` branch README explains:
 
 - that BrewTracker is an extension of Brewfather rather than an independent replacement project
-- attribution to MvdDonk and links to the upstream repository and upstream `main`
-- the branch model `main` + `brewtracker`
+- attribution to MvdDonk and links to upstream
+- the clean `main` + `brewtracker` branch model
 - the seven Brew Tracker sensors
 - the read-only design boundary
 - installation of the local `custom_components/brewfather` variant
-- the historical lab / known-good source
+- the runtime-known-good commit
+- the archived pre-migration rescue source
 - the link to this document for the complete technical delta
 
 **Why**
 
-A user landing directly on the `brewtracker` branch must immediately understand which work is upstream Brewfather and which work is the local BrewTracker extension.
+A visitor landing directly on the `brewtracker` branch should immediately understand which work is upstream Brewfather and which work is the local BrewTracker extension.
 
 ### `custom_components/brewfather/const.py`
 
@@ -276,7 +297,7 @@ BrewTracker sensor normalization includes helpers for:
 
 - current stage
 - current step
-- next step
+- next logical step
 - runtime status
 - remaining seconds
 - progress percentage
@@ -295,9 +316,25 @@ The raw sensor exposes the complete Brew Tracker dictionary in its `data` attrib
 
 Paused stage timing uses the observed Brewfather `position` value as the stable remaining-time value, clamped to the stage duration. Running stages derive remaining time from the stage start timestamp and duration.
 
+#### Next-step behavior
+
+`brewtracker_next_step` represents the next logical Brew Tracker step, not merely the next item inside the current stage.
+
+The resolver follows this order:
+
+```text
+1. next step in the current stage, if one exists
+2. otherwise first valid step in the next stage
+3. otherwise None at the end of the final stage
+```
+
+This cross-stage behavior was added after practical Home Assistant testing exposed a stage-boundary gap where the final Mash step had no next step even though Boil followed.
+
+The behavior is covered by a focused regression test and was practically verified during the Mash → Boil transition on 2026-09-04.
+
 **Why**
 
-The raw Brewfather tracker structure is useful for diagnostics, but downstream Home Assistant consumers also need stable, simple entities for status, stage, step, progress and remaining time.
+The raw Brewfather tracker structure is useful for diagnostics, but downstream Home Assistant consumers also need stable, simple entities for status, stage, step, progress, remaining time and the next logical action.
 
 ### `custom_components/brewfather/__init__.py`
 
@@ -316,7 +353,7 @@ sensor.brewfather_brew_tracker_status
 sensor.brewfather_brewtracker_status
 ```
 
-When the Brew Tracker status changes:
+When Brew Tracker status changes:
 
 ```text
 paused / pausing
@@ -350,7 +387,7 @@ Provides a lightweight test harness that mocks Home Assistant dependencies so da
 
 **BrewTracker addition**
 
-Extends the Home Assistant test stubs with the minimum modules / classes required by the BrewTracker imports, including:
+Extends the Home Assistant test stubs with the minimum modules / classes required by BrewTracker imports, including:
 
 - `homeassistant.helpers.event`
 - coordinator / sensor entity stubs
@@ -362,7 +399,7 @@ Extends the Home Assistant test stubs with the minimum modules / classes require
 
 Resume-refresh and focused sensor tests import more of the integration than the original parser-only tests did. The stubs keep these unit tests lightweight while preserving the original no-full-HA-runtime approach.
 
-The test harness must remain a testing-only change and must not alter runtime behavior.
+The test harness is a testing-only change and must not alter runtime behavior.
 
 ### `tests/test_brewtracker.py`
 
@@ -379,7 +416,9 @@ active tracker discovery contract
 inactive / running / paused / completed status normalization
 stage selection
 current step selection
-next step selection
+next step inside the same stage
+next step across a stage boundary
+end-of-final-stage behavior
 paused remaining time
 progress calculation
 seven-sensor state / attribute exposure
@@ -392,6 +431,8 @@ missing/inactive tracker behavior
 
 String / wiring checks alone are insufficient. These tests verify the actual BrewTracker normalization behavior used by Home Assistant and BrewAssistant.
 
+The cross-stage regression test was added after the practical 2026-09-04 test identified the missing boundary case.
+
 ### `.github/workflows/brewtracker-watchdogs.yml`
 
 **Upstream responsibility**
@@ -402,7 +443,7 @@ Not present on `main`.
 
 Adds the BrewTracker "watchdog" / "rastgård" quality gate for pushes to `brewtracker`.
 
-It currently performs:
+It performs:
 
 ```text
 Python compileall
@@ -418,11 +459,11 @@ focused BrewTracker behavior tests
 baseline batch parser tests
 ```
 
-Ruff is intentionally restricted to critical error classes for the BrewTracker-relevant files rather than enforcing a new style policy across old upstream Brewfather code.
+Ruff is intentionally restricted to critical error classes for BrewTracker-relevant files rather than enforcing a new style policy across old upstream Brewfather code.
 
 **Why**
 
-The selected Brewfather base is intentionally frozen. BrewTracker maintenance should catch regressions without turning into an unrelated cleanup / rewrite of upstream code.
+The selected Brewfather base is intentionally retained. BrewTracker maintenance should catch regressions without turning into an unrelated cleanup / rewrite of upstream code.
 
 ### `.github/workflows/brewtracker-codeql.yml`
 
@@ -436,7 +477,7 @@ Runs GitHub CodeQL analysis for Python on the `brewtracker` branch.
 
 **Why**
 
-This mirrors the security-review principle used in the Garmin Fitness workstream and gives the BrewTracker delta an additional automated security check before practical installation.
+This gives the BrewTracker delta an additional automated security check before practical installation.
 
 ### `docs/BREWTRACKER.md`
 
@@ -454,7 +495,7 @@ It is the technical reconstruction, maintenance and recovery reference for the l
 
 ## Runtime data contract
 
-BrewTracker is intended to expose a read-only Home Assistant feed.
+BrewTracker exposes a read-only Home Assistant feed.
 
 The minimum public sensor contract is:
 
@@ -479,15 +520,17 @@ brew_tracker_batch_status
 
 The raw payload remains available for diagnostics and future downstream normalization, while BrewAssistant remains responsible for its own business logic and brewing orchestration.
 
-## Historical known-good source
+## Historical migration source
 
-Before this branch architecture was adopted, BrewTracker was developed in:
+Before the current branch architecture was adopted, BrewTracker was developed in:
 
 ```text
 Jocke1970/brewfather-brewtracker-lab
 ```
 
-The practical recovery baseline was:
+That repository is now retired from active development and archived as historical/recovery material.
+
+The historical practical baseline was:
 
 ```text
 branch: brewtracker-known-good-20260611
@@ -495,31 +538,17 @@ commit: 7acdaf00394cc3e2de2ba16fd0bb60e1fa227d7c
 date: 2026-06-11
 ```
 
-That baseline had been verified in Home Assistant with:
+That baseline had been verified in Home Assistant with integration startup, BrewTracker sensor creation, raw payload exposure, discovery while a batch was still `Planning`, paused state, stage, step, next step, progress, remaining time and downstream BrewAssistant consumption.
 
-```text
-Brewfather integration loads successfully
-BrewTracker sensors are created
-raw payload is exposed
-active Brew Tracker is found while batch status is Planning
-paused state is detected
-current stage is exposed
-current step is exposed
-next step is exposed
-progress is exposed
-remaining time is exposed
-BrewAssistant can consume the feed
-```
+A later lab patch added resume refresh compensation. Both pieces were used as functional migration sources.
 
-A later lab patch added resume refresh compensation. Both pieces were used as the functional source for the migration into the `brewtracker` branch.
+Important: the historical lab baseline used a later Brewfather snapshot than the deliberately selected `main` in this fork. During the 2026-09-04 migration, BrewTracker functionality was ported onto the selected base rather than wholesale copying the later Brewfather code.
 
-Important: the old known-good branch was based on a later Brewfather snapshot than the currently selected `main`. During the 2026-09-04 migration, only the BrewTracker functionality was ported. The underlying Brewfather files were not wholesale copied, specifically to avoid silently updating Brewfather.
+## Automated validation
 
-## 2026-09-04 pre-installation validation state
+The BrewTracker branch is reviewed by the branch-specific watchdog suite.
 
-Before installing the migrated `brewtracker` branch into Home Assistant, the branch was reviewed with the BrewTracker watchdog suite.
-
-The following checks passed on the migrated branch:
+For the runtime-known-good code commit `30a789d11d1dd1f3b7c9a0cb1987df6c675e5c13`, the following checks were green:
 
 ```text
 Python compile
@@ -536,49 +565,96 @@ CodeQL Python analysis
 Home Assistant hassfest
 ```
 
-The watchdog review found and corrected one functional weakness before installation:
+The watchdog review previously found and corrected a resume-listener weakness: both known status entity-ID variants are now watched.
 
-```text
-resume refresh originally watched only:
-  sensor.brewfather_brew_tracker_status
-
-it now watches both:
-  sensor.brewfather_brew_tracker_status
-  sensor.brewfather_brewtracker_status
-```
-
-The original lightweight test harness also required additional Home Assistant stubs after resume-refresh imports were introduced. Those changes are isolated to `tests/conftest.py` and do not affect production runtime.
+The focused test suite also caught and now protects the cross-stage `next_step` behavior added during practical runtime testing.
 
 ### HACS validation note
 
-The repository's existing HACS Action is not currently green.
+The repository's existing HACS Action may remain red because of repository/publishing metadata rather than BrewTracker runtime code.
 
-The observed HACS complaints concern repository / publishing metadata rather than the BrewTracker integration code itself, including repository-level expectations such as topics, Issues configuration and license metadata.
+The observed HACS complaints concerned repository-level expectations such as:
 
-The integration-level manifest / `hacs.json` portion was not identified as the BrewTracker runtime failure.
+```text
+repository topics
+Issues configuration
+license metadata
+```
 
-This is intentionally documented rather than silently changing repository publication metadata, because BrewTracker is currently maintained as a local branch extension and the selected Brewfather base should not be modified merely to satisfy unrelated publication policy.
+The integration manifest and `hacs.json` validation were not the BrewTracker runtime failure.
+
+This is intentionally documented rather than silently changing unrelated publication metadata. BrewTracker is maintained as a local branch extension and the selected Brewfather base must not be modified merely to satisfy unrelated publication policy.
+
+## Practical Home Assistant verification — 2026-09-04
+
+The current runtime-known-good code commit is:
+
+```text
+30a789d11d1dd1f3b7c9a0cb1987df6c675e5c13
+```
+
+It was practically verified in Home Assistant after automated checks passed.
+
+Verified behavior:
+
+```text
+Brewfather integration loads without setup errors
+all seven BrewTracker entities are created
+inactive state behaves correctly with no active tracker
+active Brew Tracker is discovered while batch status is Planning
+tracker remains available when batch changes to Brewing
+paused state is exposed
+running state is exposed after Play / Resume
+current stage updates
+current step updates
+progress updates
+time remaining updates
+next step works within the current stage
+next step works across a stage boundary
+Mash → Boil transition is exposed
+raw payload remains available
+BrewAssistant can consume the feed
+```
+
+During testing, an initial stage-boundary gap was found: while the final Mash step was active, `brewtracker_next_step` became unavailable even though the next stage existed. The resolver and tests were updated, after which the Mash → Boil boundary was verified in the live HA test.
+
+Some Brewfather transition/ramp states can briefly make current-step and next-step presentation look unusual until the next coordinator refresh. This is treated as a normalization/presentation edge case, not a blocker for the known-good runtime baseline. Any future normalization change must preserve the raw payload and the existing sensor contract.
 
 ## Known-good policy
 
-The migrated `brewtracker` branch is **not** considered a new practical known-good merely because automated checks are green.
+Automated checks alone do not create a practical known-good.
 
-A new known-good baseline requires both:
+A new known-good baseline requires:
 
 ```text
 1. automated watchdog / validation checks pass
 2. practical Home Assistant runtime verification passes
 ```
 
-Only after both conditions are satisfied should a recovery tag / known-good marker be created.
+When both conditions are satisfied, record the exact commit SHA in this document and relevant release/change notes.
 
-Recommended tag naming pattern:
+Do **not** create permanent `known-good/*`, `backup/*` or temporary work branches merely to mark the state. The repository's normal public branch list should remain:
 
 ```text
-brewtracker-known-good-YYYYMMDD
+main
+brewtracker
 ```
 
-The old `brewfather-brewtracker-lab` recovery source should remain available until the new branch has passed practical Home Assistant verification.
+The current runtime-known-good code reference is:
+
+```text
+30a789d11d1dd1f3b7c9a0cb1987df6c675e5c13
+```
+
+Git commit history plus the documented SHA is the normal BrewTracker rollback point.
+
+For the exact Home Assistant installation that existed immediately before the 2026-09-04 migration, use the archived lab rescue snapshot:
+
+```text
+Jocke1970/brewfather-brewtracker-lab
+rescue/ha-pre-brewtracker-20260904
+67e40f4a450db2a50bc00ff1cab5f1863420be81
+```
 
 ## Updating BrewTracker after an intentional Brewfather update
 
@@ -586,19 +662,21 @@ Do not update Brewfather merely because BrewTracker is being changed.
 
 When an upstream Brewfather update is intentionally accepted:
 
-1. Review the upstream Brewfather changes separately and decide whether the update is wanted.
-2. Update and verify `main` first.
-3. Keep a backup/reference to the previous `main` commit.
-4. Bring the new `main` into `brewtracker` by merge/rebase according to the maintenance workflow in use at that time.
+1. Review upstream Brewfather changes separately and decide whether the update is wanted.
+2. Record the current `main` commit SHA in the maintenance notes before changing it.
+3. Update and verify `main` first.
+4. Bring the new `main` into `brewtracker` using the chosen merge/rebase workflow.
 5. Compare `main..brewtracker` and reconcile every file in the delta inventory above.
 6. Preserve the Brew Tracker API constants and API methods.
 7. Verify all-batch active-tracker discovery.
 8. Verify the seven Brew Tracker sensor kinds and raw payload.
-9. Verify both status entity-ID variants in resume refresh compensation.
-10. Run BrewTracker Watchdogs, CodeQL and hassfest.
-11. Review any HACS result separately to distinguish integration failures from repository metadata policy.
-12. Test the branch in Home Assistant before creating a new known-good tag.
-13. Update this document if the intentional delta changes.
+9. Verify `next_step` both within a stage and across a stage boundary.
+10. Verify both status entity-ID variants in resume refresh compensation.
+11. Run BrewTracker Watchdogs, CodeQL and hassfest.
+12. Review any HACS result separately to distinguish integration failures from repository metadata policy.
+13. Test the branch in Home Assistant.
+14. Record the new practical known-good commit SHA in this document.
+15. Update this document if the intentional delta changes.
 
 Useful comparisons:
 
@@ -619,15 +697,13 @@ git diff main..brewtracker -- \
   tests/test_brewtracker.py
 ```
 
-The first command is important: it catches newly added / removed delta files that a hard-coded file list might miss.
+The first command is important because it catches newly added or removed delta files that a hard-coded file list might miss.
 
-## Home Assistant runtime verification
+## Home Assistant verification checklist
 
-After installing the `brewtracker` branch and restarting Home Assistant, verify the original Brewfather integration first, then BrewTracker.
+After installing `brewtracker` and restarting Home Assistant, verify the original Brewfather integration first, then BrewTracker.
 
 ### Base integration
-
-Verify that:
 
 ```text
 Brewfather integration loads without setup errors
@@ -644,17 +720,15 @@ brew_tracker
 brewtracker
 ```
 
-Minimum verification:
-
-```text
-Brew Tracker status sensor exists
-Brew Tracker raw sensor exists
-```
-
 Typical IDs:
 
 ```text
 sensor.brewfather_brew_tracker_status
+sensor.brewfather_brew_tracker_stage
+sensor.brewfather_brew_tracker_step
+sensor.brewfather_brew_tracker_progress
+sensor.brewfather_brew_tracker_time_remaining
+sensor.brewfather_brew_tracker_next_step
 sensor.brewfather_brew_tracker_raw
 ```
 
@@ -666,7 +740,7 @@ sensor.brewfather_brewtracker_status
 
 ### Active session
 
-During an active Brew Tracker session verify:
+Verify:
 
 ```text
 status = running or paused as appropriate
@@ -679,11 +753,13 @@ raw data attribute contains the tracker dictionary
 batch id / name / recipe / status attributes are correct
 ```
 
-Explicitly verify that an active Brew Tracker is found when its Brewfather batch has a non-`Fermenting` status such as `Planning`.
+Explicitly verify discovery with a non-`Fermenting` batch status such as `Planning`.
+
+Explicitly verify a stage boundary so the last step in one stage resolves the first valid step in the next stage.
 
 ### Pause / resume
 
-During a pause/resume test verify:
+Verify:
 
 ```text
 paused is detected
@@ -698,7 +774,7 @@ Remember that resume refresh compensation starts only after Home Assistant obser
 
 ### Downstream BrewAssistant
 
-After the raw BrewTracker integration has been verified independently, confirm that BrewAssistant can consume the feed without requiring BrewTracker-specific hardware or orchestration logic to be moved upstream into this integration.
+After BrewTracker is verified independently, confirm that BrewAssistant can consume the feed without moving BrewAssistant-specific hardware or orchestration logic into this integration.
 
 ## Installation model
 
@@ -730,17 +806,32 @@ Do not merge BrewTracker into `main` merely for installation. The long-lived `br
 
 ## Recovery
 
-Before replacing a working Home Assistant installation, keep either a filesystem backup or a known reference to the previously installed `custom_components/brewfather` directory.
+Normal BrewTracker rollback uses the exact documented practical known-good commit SHA.
 
-If the new branch fails practical validation:
+Current reference:
 
 ```text
-restore previous working integration
-restart Home Assistant
-return to the last practical known-good BrewTracker reference
+30a789d11d1dd1f3b7c9a0cb1987df6c675e5c13
 ```
 
-Do not mark an automated-only result as known-good.
+If a future BrewTracker build fails practical validation:
+
+```text
+restore/install the last documented practical known-good commit
+restart Home Assistant
+verify ordinary Brewfather entities
+verify BrewTracker status/raw entities
+```
+
+For recovery to the exact pre-migration Home Assistant source snapshot, use the archived lab repository:
+
+```text
+repository: Jocke1970/brewfather-brewtracker-lab
+branch: rescue/ha-pre-brewtracker-20260904
+commit: 67e40f4a450db2a50bc00ff1cab5f1863420be81
+```
+
+The lab repository is historical/recovery-only and must not resume active BrewTracker development.
 
 ## Attribution
 
