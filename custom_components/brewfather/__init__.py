@@ -10,7 +10,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.const import Platform 
 from homeassistant.helpers.event import async_track_state_change_event
 
-from .coordinator import BrewfatherCoordinator
+from .fermentation_ramp import BrewfatherRampCoordinator as BrewfatherCoordinator
 from .const import (
     DOMAIN,
     COORDINATOR,
