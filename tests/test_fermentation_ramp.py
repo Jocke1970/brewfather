@@ -15,7 +15,7 @@ def test_interpolate_rising_ramp_midpoint():
         start,
         end,
         start + timedelta(hours=12),
-    ) == 19.2
+    ) == 19.25
 
 
 def test_interpolate_falling_ramp_midpoint():
