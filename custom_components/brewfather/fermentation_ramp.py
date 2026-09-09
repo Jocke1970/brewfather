@@ -40,13 +40,13 @@ class BrewfatherRampCoordinator(BrewfatherCoordinator):
         """Return a clamped linear target for an active temperature ramp."""
         duration = (ramp_ends_at - ramp_started_at).total_seconds()
         if duration <= 0:
-            return round(float(target_temperature), 1)
+            return round(float(target_temperature), 2)
         elapsed = (now - ramp_started_at).total_seconds()
         progress = min(max(elapsed / duration, 0.0), 1.0)
         target = float(start_temperature) + (
             float(target_temperature) - float(start_temperature)
         ) * progress
-        return round(target, 1)
+        return round(target, 2)
 
     def get_batch_data(
         self,
@@ -121,7 +121,7 @@ class BrewfatherRampCoordinator(BrewfatherCoordinator):
             data.schedule_ramp_progress_percent = round(progress * 100.0, 1)
 
             if self.temperature_correction_enabled:
-                data.current_step_temperature = schedule_target
+                data.current_step_temperature = round(schedule_target, 1)
             return data
 
         data.schedule_target_temperature = data.current_step_temperature
