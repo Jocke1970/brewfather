@@ -10,7 +10,10 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.const import Platform 
 from homeassistant.helpers.event import async_track_state_change_event
 
-from .fermentation_ramp import BrewfatherRampCoordinator as BrewfatherCoordinator
+from .fermentation_ramp import (
+    BrewfatherRampCoordinator as BrewfatherCoordinator,
+    install_ramp_sensor_metadata,
+)
 from .const import (
     DOMAIN,
     COORDINATOR,
@@ -102,6 +105,10 @@ async def async_setup_entry(hass: core.HomeAssistant, config_entry: config_entri
     hass.data[DOMAIN][config_entry.entry_id] = {
         COORDINATOR: coordinator,
     }
+
+    # Add read-only schedule metadata to the existing target-temperature sensor
+    # before Home Assistant creates the sensor platform entities.
+    install_ramp_sensor_metadata()
 
     # This creates each HA object for each platform your device requires.
     # It's done by calling the `async_setup_entry` function in each platform module.
