@@ -2,14 +2,28 @@
 
 The selected upstream Brewfather integration exposes fermentation ramp lengths in
 whole days but historically converts rising ramps into coarse 1 °C steps and does
-not interpolate falling ramps.  This subclass keeps the upstream coordinator
-behavior intact and replaces only the active ramp target with a linear target.
+not interpolate falling ramps. This adapter keeps the upstream coordinator
+behavior intact, calculates a linear schedule target, and exposes that schedule as
+read-only metadata for downstream consumers such as BrewAssistant.
 """
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Any
 
 from .coordinator import BatchInfo, BrewfatherCoordinator, BrewfatherCoordinatorData
+
+
+RAMP_METADATA_FIELDS = (
+    "schedule_target_temperature",
+    "schedule_ramp_active",
+    "schedule_ramp_start_temperature",
+    "schedule_ramp_target_temperature",
+    "schedule_ramp_days",
+    "schedule_ramp_started_at",
+    "schedule_ramp_ends_at",
+    "schedule_ramp_progress_percent",
+)
 
 
 class BrewfatherRampCoordinator(BrewfatherCoordinator):
@@ -94,9 +108,9 @@ class BrewfatherRampCoordinator(BrewfatherCoordinator):
                 1.0,
             )
 
-            # Metadata is deliberately attached to coordinator data even when the
-            # upstream "temperature ramping" option is disabled. Downstream users
-            # can inspect the Brewfather schedule without forcing display behavior.
+            # Metadata is deliberately attached even when the upstream
+            # "temperature ramping" option is disabled. Downstream consumers can
+            # follow the schedule without forcing the upstream display behavior.
             data.schedule_target_temperature = schedule_target
             data.schedule_ramp_active = True
             data.schedule_ramp_start_temperature = float(previous.step_temp)
@@ -119,3 +133,30 @@ class BrewfatherRampCoordinator(BrewfatherCoordinator):
         data.schedule_ramp_ends_at = None
         data.schedule_ramp_progress_percent = None
         return data
+
+
+def install_ramp_sensor_metadata() -> None:
+    """Expose schedule metadata on the existing Brewfather target sensor."""
+    from .sensor import BrewfatherSensor, SensorKinds
+
+    if getattr(BrewfatherSensor, "_continuous_ramp_metadata_installed", False):
+        return
+
+    original = BrewfatherSensor._refresh_sensor_data
+
+    def _refresh_with_ramp_metadata(
+        data: BrewfatherCoordinatorData,
+        sensor_type: Any,
+        device_class: Any,
+        entity_id: str,
+    ):
+        result = original(data, sensor_type, device_class, entity_id)
+        if data is not None and sensor_type == SensorKinds.fermenting_current_temperature:
+            attrs = dict(result.extra_state_attributes or {})
+            for field in RAMP_METADATA_FIELDS:
+                attrs[field] = getattr(data, field, None)
+            result.extra_state_attributes = attrs
+        return result
+
+    BrewfatherSensor._refresh_sensor_data = staticmethod(_refresh_with_ramp_metadata)
+    BrewfatherSensor._continuous_ramp_metadata_installed = True
