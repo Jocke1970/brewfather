@@ -106,7 +106,15 @@ class Connection:
             return batch_item_from_dict(json.loads(testData))
         else:
             batch = await self.get_api_response(url, batch_item_from_dict)
-            return batch    
+            return batch
+
+    async def get_batch_raw(self, batchId: str, testData=TESTDATA_BATCH_3) -> dict[str, Any]:
+        """Return the unfiltered batch payload, including the complete recipe object."""
+        url = f"{ALL_BATCHES_URI}{batchId}"
+        if DRY_RUN:
+            raw = json.loads(testData)
+            return raw if isinstance(raw, dict) else {}
+        return await self.get_api_response(url, lambda data: data)
 
     async def get_readings(self, batchId: str) -> List[Reading]:
         url = READINGS_URI.format(batchId)
