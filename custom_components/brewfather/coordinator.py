@@ -52,6 +52,7 @@ class BrewfatherCoordinatorData:
     brew_tracker_batch_name: Optional[str]
     brew_tracker_recipe_name: Optional[str]
     brew_tracker_batch_status: Optional[str]
+    brew_tracker_recipe: Optional[dict[str, Any]]
 
     def __init__(self):
         # set defaults to None
@@ -71,6 +72,7 @@ class BrewfatherCoordinatorData:
         self.brew_tracker_batch_name = None
         self.brew_tracker_recipe_name = None
         self.brew_tracker_batch_status = None
+        self.brew_tracker_recipe = None
 
 
 class BatchInfo:
@@ -179,6 +181,50 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
             
         return main_batch_data
 
+    async def add_brewtracker_recipe_data(self, data: BrewfatherCoordinatorData) -> None:
+        """Attach the complete recipe for the active BrewTracker batch when available.
+
+        Recipe enrichment is intentionally best-effort. A temporary failure while
+        loading the full batch must not make the existing BrewTracker runtime feed
+        unavailable.
+        """
+        batch_id = data.brew_tracker_batch_id or data.batch_id
+        if batch_id is None:
+            return
+
+        try:
+            raw_batch = await self.connection.get_batch_raw(batch_id)
+        except Exception as ex:
+            _LOGGER.warning(
+                "Unable to load full BrewTracker recipe for batch %s: %s",
+                batch_id,
+                ex,
+            )
+            return
+
+        if not isinstance(raw_batch, dict):
+            return
+
+        recipe = raw_batch.get("recipe")
+        if not isinstance(recipe, dict):
+            return
+
+        data.brew_tracker_recipe = recipe
+        if data.brew_tracker_recipe_name is None:
+            recipe_name = recipe.get("name")
+            if isinstance(recipe_name, str):
+                data.brew_tracker_recipe_name = recipe_name
+        if data.brew_name is None:
+            data.brew_name = data.brew_tracker_recipe_name
+        if data.brew_tracker_batch_name is None:
+            batch_name = raw_batch.get("name")
+            if isinstance(batch_name, str):
+                data.brew_tracker_batch_name = batch_name
+        if data.brew_tracker_batch_status is None:
+            batch_status = raw_batch.get("status")
+            if isinstance(batch_status, str):
+                data.brew_tracker_batch_status = batch_status
+
     async def add_brewtracker_discovery_data(
         self,
         data: BrewfatherCoordinatorData,
@@ -188,6 +234,7 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
         if self._brewtracker_active(data.brew_tracker):
             data.brew_tracker_batch_id = data.batch_id
             data.brew_tracker_recipe_name = data.brew_name
+            await self.add_brewtracker_recipe_data(data)
             return
 
         checked_batch_ids = {batch.id for batch in fermenting_batches if batch.id is not None}
@@ -211,6 +258,8 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
                 data.batch_id = batch.id
             if data.brew_name is None and batch.recipe is not None:
                 data.brew_name = batch.recipe.name
+
+            await self.add_brewtracker_recipe_data(data)
 
             _LOGGER.debug(
                 "Active Brew Tracker found on batch %s (%s)",
@@ -299,7 +348,7 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
             rampingStep = currentStep
             stepBeforeRamp = prevStep
             if self.temperature_correction_enabled and curren_step_is_ramping and stepBeforeRamp is not None and rampingStep.ramp is not None and rampingStep.ramp > 0:
-                #instead of calculating what the temperature increase should be every hour, we will calculate how often we have to increase of decrease 1 whole degree C
+                #instead of calculating what the temperature increase should be every hour we have to calculate how often we have to increase of decrease 1 whole degree C
                 _LOGGER.debug("Next temperature has a ramp value of %s days", rampingStep.ramp)
                 
                 #from 20 to 25 in 24 hours
