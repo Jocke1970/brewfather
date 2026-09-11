@@ -372,7 +372,7 @@ class BrewfatherSensor(CoordinatorEntity[BrewfatherCoordinator], SensorEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
+        """Handle updated data from the sensors."""
         """Update Sensor Entity."""
         _LOGGER.debug(" _handle_coordinator_update | Updating state of the sensors : %s", self._sensor_type.name)
         #await self.coordinator.async_request_refresh()
@@ -727,6 +727,7 @@ class BrewfatherSensor(CoordinatorEntity[BrewfatherCoordinator], SensorEntity):
             elif sensor_type == SensorKinds.brewtracker_raw:
                 sensor_data.state = BrewfatherSensor._status(tracker)
                 custom_attributes["data"] = tracker
+                custom_attributes["recipe"] = data.brew_tracker_recipe
 
             if sensor_data.state is None:
                 sensor_data.attr_available = False
