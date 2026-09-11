@@ -1,5 +1,7 @@
 """Focused tests for BrewTracker runtime normalization."""
 
+import asyncio
+
 from custom_components.brewfather.coordinator import BrewfatherCoordinator
 from custom_components.brewfather.sensor import BrewfatherSensor, SensorKinds
 from custom_components.brewfather.coordinator import BrewfatherCoordinatorData
@@ -45,6 +47,27 @@ def _tracker_with_next_stage(*, paused=False):
     return tracker
 
 
+def _recipe():
+    return {
+        "name": "Test recipe",
+        "boilTime": 60,
+        "hops": [
+            {
+                "name": "Magnum",
+                "amount": 0.01,
+                "use": "Boil",
+                "time": 60,
+                "timeUnit": "min",
+            }
+        ],
+        "mash": {
+            "steps": [
+                {"name": "Saccharification", "stepTemp": 66, "stepTime": 60}
+            ]
+        },
+    }
+
+
 def _data(tracker):
     data = BrewfatherCoordinatorData()
     data.batch_id = "batch-1"
@@ -53,6 +76,7 @@ def _data(tracker):
     data.brew_tracker_batch_name = "Test batch"
     data.brew_tracker_recipe_name = "Test recipe"
     data.brew_tracker_batch_status = "Planning"
+    data.brew_tracker_recipe = _recipe()
     return data
 
 
@@ -138,8 +162,33 @@ def test_brewtracker_sensors_expose_expected_states_and_attributes():
     assert remaining.state == 300
     assert raw.state == "paused"
     assert raw.extra_state_attributes["data"] == data.brew_tracker
+    assert raw.extra_state_attributes["recipe"] == _recipe()
     assert status.extra_state_attributes["brew_tracker_batch_status"] == "Planning"
     assert status.extra_state_attributes["active"] is True
+
+
+def test_full_recipe_can_be_hydrated_for_planning_batch():
+    class FakeConnection:
+        async def get_batch_raw(self, batch_id):
+            assert batch_id == "batch-1"
+            return {
+                "_id": batch_id,
+                "name": "Planning batch",
+                "status": "Planning",
+                "recipe": _recipe(),
+            }
+
+    coordinator = object.__new__(BrewfatherCoordinator)
+    coordinator.connection = FakeConnection()
+    data = BrewfatherCoordinatorData()
+    data.brew_tracker_batch_id = "batch-1"
+
+    asyncio.run(coordinator.add_brewtracker_recipe_data(data))
+
+    assert data.brew_tracker_recipe == _recipe()
+    assert data.brew_tracker_recipe_name == "Test recipe"
+    assert data.brew_tracker_batch_name == "Planning batch"
+    assert data.brew_tracker_batch_status == "Planning"
 
 
 def test_missing_tracker_keeps_status_available_but_other_values_unavailable():
