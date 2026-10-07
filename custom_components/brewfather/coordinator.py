@@ -27,7 +27,18 @@ from .const import (
     CONF_CUSTOM_STREAM_ENABLED,
     CONF_CUSTOM_STREAM_LOGGING_ID,
     CONF_CUSTOM_STREAM_TEMPERATURE_ENTITY_NAME,
-    CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME
+    CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME,
+    CONF_CUSTOM_STREAM_DEVICE_NAME,
+    CONF_CUSTOM_STREAM_AUX_TEMPERATURE_ENTITY_NAME,
+    CONF_CUSTOM_STREAM_EXT_TEMPERATURE_ENTITY_NAME,
+    CONF_CUSTOM_STREAM_TEMP_TARGET_ENTITY_NAME,
+    CONF_CUSTOM_STREAM_GRAVITY_TARGET_ENTITY_NAME,
+    CONF_CUSTOM_STREAM_DEVICE_SOURCE,
+    CONF_CUSTOM_STREAM_REPORT_SOURCE,
+    DEFAULT_CUSTOM_STREAM_DEVICE_NAME,
+    DEFAULT_CUSTOM_STREAM_DEVICE_SOURCE,
+    DEFAULT_CUSTOM_STREAM_REPORT_SOURCE,
+    CUSTOM_STREAM_MIN_INTERVAL_SECONDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -100,12 +111,45 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
         )
         self.custom_stream_enabled = entry.data.get(CONF_CUSTOM_STREAM_ENABLED, False)
         self.last_update_success_time: Optional[datetime] = None
+        self.custom_stream_last_post_time: Optional[datetime] = None
         if self.custom_stream_enabled:
             self.custom_stream_logging_id = entry.data.get(CONF_CUSTOM_STREAM_LOGGING_ID, None)
-
-            self.custom_stream_temperature_entity_name = entry.data.get(CONF_CUSTOM_STREAM_TEMPERATURE_ENTITY_NAME, None)
-            
-            self.custom_stream_gravity_entity_name = entry.data.get(CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME, None)
+            self.custom_stream_device_name = entry.data.get(
+                CONF_CUSTOM_STREAM_DEVICE_NAME,
+                DEFAULT_CUSTOM_STREAM_DEVICE_NAME,
+            )
+            self.custom_stream_temperature_entity_name = entry.data.get(
+                CONF_CUSTOM_STREAM_TEMPERATURE_ENTITY_NAME,
+                None,
+            )
+            self.custom_stream_gravity_entity_name = entry.data.get(
+                CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME,
+                None,
+            )
+            self.custom_stream_aux_temperature_entity_name = entry.data.get(
+                CONF_CUSTOM_STREAM_AUX_TEMPERATURE_ENTITY_NAME,
+                None,
+            )
+            self.custom_stream_ext_temperature_entity_name = entry.data.get(
+                CONF_CUSTOM_STREAM_EXT_TEMPERATURE_ENTITY_NAME,
+                None,
+            )
+            self.custom_stream_temp_target_entity_name = entry.data.get(
+                CONF_CUSTOM_STREAM_TEMP_TARGET_ENTITY_NAME,
+                None,
+            )
+            self.custom_stream_gravity_target_entity_name = entry.data.get(
+                CONF_CUSTOM_STREAM_GRAVITY_TARGET_ENTITY_NAME,
+                None,
+            )
+            self.custom_stream_device_source = entry.data.get(
+                CONF_CUSTOM_STREAM_DEVICE_SOURCE,
+                DEFAULT_CUSTOM_STREAM_DEVICE_SOURCE,
+            )
+            self.custom_stream_report_source = entry.data.get(
+                CONF_CUSTOM_STREAM_REPORT_SOURCE,
+                DEFAULT_CUSTOM_STREAM_REPORT_SOURCE,
+            )
 
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=update_interval)
 
@@ -128,16 +172,36 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
         fermentingBatches:list[BatchInfo] = []
         all_batches_data:list[BatchInfo] = []
 
-        #if custom stream enabled
-        if self.custom_stream_enabled:
+        # Custom Stream is deliberately decoupled from arbitrary coordinator refreshes.
+        # Brewfather documents a maximum of one POST per 15 minutes for each
+        # device name. We also only stream while Brewfather reports at least one
+        # batch in Fermenting status.
+        if (
+            self.custom_stream_enabled
+            and len(allBatches) > 0
+            and self._custom_stream_due(datetime.now(timezone.utc))
+        ):
             stream_data = self.create_custom_stream_data()
             if stream_data is None:
-                _LOGGER.debug("No data was found to post to custom stream")
+                _LOGGER.debug("No valid data was found to post to custom stream")
             else:
-                _LOGGER.debug("Posting custom stream data")
-                success = await self.connection.post_custom_stream(self.custom_stream_logging_id, stream_data)
-                if not success:
-                    _LOGGER.error("Failed to post custom stream data")
+                _LOGGER.debug(
+                    "Posting Brewfather custom stream data for device %s",
+                    stream_data.name,
+                )
+                try:
+                    success = await self.connection.post_custom_stream(
+                        self.custom_stream_logging_id,
+                        stream_data,
+                    )
+                    if success:
+                        self.custom_stream_last_post_time = datetime.now(timezone.utc)
+                    else:
+                        _LOGGER.error("Failed to post custom stream data")
+                except Exception as ex:
+                    # The outbound logger is best-effort and must never make the
+                    # normal Brewfather read path unavailable.
+                    _LOGGER.warning("Custom stream POST failed; continuing normal update: %s", ex)
 
         for batch in allBatches:
             batchData = await self.connection.get_batch(batch.id)
@@ -445,45 +509,135 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
             return "K"
         else:
             _LOGGER.warning("Unsupported temperature unit '%s', defaulting to Celsius", ha_unit)
-            return "C"  # Default to Celsius
+            return "C"
+
+    def _custom_stream_due(self, now: datetime) -> bool:
+        """Return True when a new Custom Stream POST is allowed."""
+        if self.custom_stream_last_post_time is None:
+            return True
+        elapsed = (now - self.custom_stream_last_post_time).total_seconds()
+        return elapsed >= CUSTOM_STREAM_MIN_INTERVAL_SECONDS
+
+    @staticmethod
+    def _numeric_state(state) -> Optional[float]:
+        """Return one numeric HA state or None for unknown/unavailable/non-numeric."""
+        if state is None or state.state in (None, "", STATE_UNKNOWN, STATE_UNAVAILABLE):
+            return None
+        try:
+            return float(state.state)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _convert_temperature(value: float, from_unit: str, to_unit: str) -> float:
+        """Convert C/F/K without introducing an extra dependency."""
+        if from_unit == to_unit:
+            return value
+
+        if from_unit == UnitOfTemperature.CELSIUS:
+            celsius = value
+        elif from_unit == UnitOfTemperature.FAHRENHEIT:
+            celsius = (value - 32.0) * 5.0 / 9.0
+        elif from_unit == UnitOfTemperature.KELVIN:
+            celsius = value - 273.15
+        else:
+            raise ValueError(f"Unsupported source temperature unit: {from_unit}")
+
+        if to_unit == UnitOfTemperature.CELSIUS:
+            return celsius
+        if to_unit == UnitOfTemperature.FAHRENHEIT:
+            return celsius * 9.0 / 5.0 + 32.0
+        if to_unit == UnitOfTemperature.KELVIN:
+            return celsius + 273.15
+        raise ValueError(f"Unsupported target temperature unit: {to_unit}")
+
+    def _temperature_entity_value(
+        self,
+        entity_id: Optional[str],
+        target_unit: str,
+    ) -> Optional[float]:
+        """Read and normalize an optional temperature entity."""
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        value = self._numeric_state(state)
+        if value is None or state is None:
+            return None
+
+        source_unit = state.attributes.get("unit_of_measurement")
+        if source_unit not in (
+            UnitOfTemperature.CELSIUS,
+            UnitOfTemperature.FAHRENHEIT,
+            UnitOfTemperature.KELVIN,
+        ):
+            _LOGGER.warning(
+                "Skipping Custom Stream temperature entity %s with unsupported unit %s",
+                entity_id,
+                source_unit,
+            )
+            return None
+        try:
+            return round(self._convert_temperature(value, source_unit, target_unit), 3)
+        except ValueError:
+            return None
+
+    def _optional_numeric_entity_value(self, entity_id: Optional[str]) -> Optional[float]:
+        """Read one optional numeric entity without unit conversion."""
+        if not entity_id:
+            return None
+        return self._numeric_state(self.hass.states.get(entity_id))
 
     def create_custom_stream_data(self) -> Optional[custom_stream_data]:
-        stream_data = custom_stream_data(name = "HomeAssistant")
-
-        entity = self.hass.states.get(self.custom_stream_temperature_entity_name)
-        if entity is None:
-            return None
-        
-        # Get temperature unit from entity
-        entity_unit = entity.attributes.get("unit_of_measurement")
-        if entity_unit:
-            stream_data.temp_unit = self.get_brewfather_temp_unit(entity_unit)
-        else:
-            stream_data.temp_unit = "C"  # Default to Celsius if no unit specified
-        
-        try:
-            temp_value = entity.state
-            
-            # Convert to float if possible
-            if temp_value is not None and temp_value != STATE_UNKNOWN and temp_value != STATE_UNAVAILABLE:
-                stream_data.temp = float(temp_value)
-            else:
-                return None
-        except (ValueError, TypeError) as ex:
-            _LOGGER.warning("Unable to convert temperature value '%s' to float: %s", temp_value, str(ex))
+        """Build one Brewfather fermentation Custom Stream payload."""
+        primary = self.hass.states.get(self.custom_stream_temperature_entity_name)
+        primary_temp = self._numeric_state(primary)
+        if primary is None or primary_temp is None:
             return None
 
-        # Get gravity if configured
-        gravity_entity_name = getattr(self, 'custom_stream_gravity_entity_name', None)
-        if gravity_entity_name:
-            gravity_entity = self.hass.states.get(gravity_entity_name)
-            if gravity_entity is not None:
-                try:
-                    gravity_value = gravity_entity.state
-                    if gravity_value is not None and gravity_value != STATE_UNKNOWN and gravity_value != STATE_UNAVAILABLE:
-                        stream_data.gravity = float(gravity_value)
-                        _LOGGER.debug("Posting gravity data: %s", stream_data.gravity)
-                except (ValueError, TypeError) as ex:
-                    _LOGGER.warning("Unable to convert gravity value '%s' to float: %s", gravity_value, str(ex))
+        primary_unit = primary.attributes.get("unit_of_measurement")
+        if primary_unit not in (
+            UnitOfTemperature.CELSIUS,
+            UnitOfTemperature.FAHRENHEIT,
+            UnitOfTemperature.KELVIN,
+        ):
+            _LOGGER.warning(
+                "Custom Stream primary temperature has unsupported unit: %s",
+                primary_unit,
+            )
+            return None
+
+        stream_data = custom_stream_data(
+            name=self.custom_stream_device_name or DEFAULT_CUSTOM_STREAM_DEVICE_NAME
+        )
+        stream_data.temp = primary_temp
+        stream_data.temp_unit = self.get_brewfather_temp_unit(primary_unit)
+        stream_data.device_source = (
+            self.custom_stream_device_source or DEFAULT_CUSTOM_STREAM_DEVICE_SOURCE
+        )
+        stream_data.report_source = (
+            self.custom_stream_report_source or DEFAULT_CUSTOM_STREAM_REPORT_SOURCE
+        )
+
+        stream_data.aux_temp = self._temperature_entity_value(
+            getattr(self, "custom_stream_aux_temperature_entity_name", None),
+            primary_unit,
+        )
+        stream_data.ext_temp = self._temperature_entity_value(
+            getattr(self, "custom_stream_ext_temperature_entity_name", None),
+            primary_unit,
+        )
+        stream_data.temp_target = self._temperature_entity_value(
+            getattr(self, "custom_stream_temp_target_entity_name", None),
+            primary_unit,
+        )
+
+        stream_data.gravity = self._optional_numeric_entity_value(
+            getattr(self, "custom_stream_gravity_entity_name", None)
+        )
+        stream_data.gravity_target = self._optional_numeric_entity_value(
+            getattr(self, "custom_stream_gravity_target_entity_name", None)
+        )
+        if stream_data.gravity is not None or stream_data.gravity_target is not None:
+            stream_data.gravity_unit = "G"
 
         return stream_data
