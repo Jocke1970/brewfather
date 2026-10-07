@@ -369,23 +369,17 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if gravity_target_error:
             errors[CONF_CUSTOM_STREAM_GRAVITY_TARGET_ENTITY_NAME] = gravity_target_error
 
-        # Validate logging ID
+        # Validate logging ID without sending a test reading. Brewfather does
+        # not expose a non-mutating Custom Stream validation endpoint.
         logging_id = user_input.get(CONF_CUSTOM_STREAM_LOGGING_ID)
-        if logging_id:
-            extracted_logging_id = extract_logging_id_from_url(logging_id)
-            try:
-                username = self.config_data.get(CONF_USERNAME)
-                password = self.config_data.get(CONF_PASSWORD)
-                valid_logging_id = await validate_custom_stream(username, password, extracted_logging_id)
-                if not valid_logging_id:
-                    errors[CONF_CUSTOM_STREAM_LOGGING_ID] = "custom_stream_test_failed"
-            except Exception:
-                errors[CONF_CUSTOM_STREAM_LOGGING_ID] = "custom_stream_test_failed"
+        extracted_logging_id = extract_logging_id_from_url(logging_id or "")
+        if not extracted_logging_id.strip():
+            errors[CONF_CUSTOM_STREAM_LOGGING_ID] = "invalid_logging_id"
 
         if not errors:
             # All validation passed - complete setup
             final_config = self.config_data.copy()
-            final_config[CONF_CUSTOM_STREAM_LOGGING_ID] = extract_logging_id_from_url(logging_id)
+            final_config[CONF_CUSTOM_STREAM_LOGGING_ID] = extracted_logging_id
             copy_custom_stream_config(final_config, user_input)
 
             return self.async_create_entry(title=final_config[CONF_NAME], data=final_config)
@@ -532,29 +526,13 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return True, {}
 
     async def _validate_logging_id(self, logging_id: str) -> tuple[str, bool, dict]:
-        """Validate and extract logging ID."""
-        extracted_logging_id = extract_logging_id_from_url(logging_id)
-        
-        # Show user what we're testing
-        if extracted_logging_id != logging_id:
-            _LOGGER.info("Testing extracted logging ID: %s", extracted_logging_id)
-        else:
-            _LOGGER.info("Testing logging ID: %s", extracted_logging_id)
-        
-        try:
-            username = self.init_info[CONF_USERNAME]
-            password = self.init_info[CONF_PASSWORD]
-            valid_logging_id = await validate_custom_stream(username, password, extracted_logging_id)
-            
-            if not valid_logging_id:
-                return extracted_logging_id, False, {CONF_CUSTOM_STREAM_LOGGING_ID: "invalid_logging_id"}
-            
-            _LOGGER.info("Logging ID validation successful")
-            return extracted_logging_id, True, {}
-            
-        except Exception as ex:
-            _LOGGER.error("Unexpected exception when testing custom stream connection: %s", str(ex))
-            return extracted_logging_id, False, {"base": "unknown"}
+        """Validate/extract logging ID without creating a fake Brewfather log."""
+        extracted_logging_id = extract_logging_id_from_url(logging_id or "")
+        if not extracted_logging_id.strip():
+            return extracted_logging_id, False, {
+                CONF_CUSTOM_STREAM_LOGGING_ID: "invalid_logging_id"
+            }
+        return extracted_logging_id, True, {}
 
     def _show_custom_stream_form(self, user_input: dict[str, Any] | None, errors: dict[str, str]) -> config_entries.FlowResult:
         """Show the custom stream configuration form."""
