@@ -138,3 +138,24 @@ def test_custom_stream_update_contract_is_fermentation_only_and_best_effort() ->
     assert "and self._custom_stream_due" in source
     assert "Custom stream POST failed; continuing normal update" in source
     assert "self.custom_stream_last_post_time = datetime.now(timezone.utc)" in source
+
+
+def test_custom_stream_does_not_forward_brewfather_api_credentials() -> None:
+    source = (
+        __import__("pathlib").Path(__file__).resolve().parents[1]
+        / "custom_components/brewfather/connection.py"
+    ).read_text(encoding="utf-8")
+
+    block = source.split("async def post_custom_stream", 1)[1].split("def to_dict", 1)[0]
+    assert "session.post(url, json=payload)" in block
+    assert "auth=self.auth" not in block
+
+
+def test_custom_stream_configuration_does_not_send_fake_reading() -> None:
+    source = (
+        __import__("pathlib").Path(__file__).resolve().parents[1]
+        / "custom_components/brewfather/config_flow.py"
+    ).read_text(encoding="utf-8")
+
+    assert "without sending a test reading" in source
+    assert "validate/extract logging ID without creating a fake Brewfather log" in source
