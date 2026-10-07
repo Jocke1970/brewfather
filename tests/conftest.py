@@ -1,6 +1,5 @@
 """pytest configuration for Brewfather tests."""
 import sys
-from datetime import datetime, timezone
 from types import ModuleType
 from unittest.mock import MagicMock
 
@@ -25,20 +24,6 @@ class _CoordinatorEntity(_GenericEntity):
 
 class _SensorEntity(_GenericEntity):
     """Minimal SensorEntity stub."""
-
-
-class _CalendarEntity(_GenericEntity):
-    """Minimal CalendarEntity stub."""
-
-
-class _CalendarEvent:
-    """Minimal CalendarEvent value object."""
-
-    def __init__(self, *, start, end, summary, description=None):
-        self.start = start
-        self.end = end
-        self.summary = summary
-        self.description = description
 
 
 class _DataUpdateCoordinator:
@@ -85,9 +70,6 @@ def mock_dependencies():
     ha_typing = ModuleType("homeassistant.helpers.typing")
     ha_components = ModuleType("homeassistant.components")
     ha_sensor = ModuleType("homeassistant.components.sensor")
-    ha_calendar = ModuleType("homeassistant.components.calendar")
-    ha_util = ModuleType("homeassistant.util")
-    ha_dt = ModuleType("homeassistant.util.dt")
 
     # Constants and simple HA types used while importing the integration.
     ha_const.CONF_PASSWORD = "password"
@@ -123,21 +105,6 @@ def mock_dependencies():
         TEMPERATURE="temperature",
         TIMESTAMP="timestamp",
     )
-    ha_calendar.CalendarEntity = _CalendarEntity
-    ha_calendar.CalendarEvent = _CalendarEvent
-
-    ha_dt.UTC = timezone.utc
-    ha_dt.as_utc = lambda value: (
-        value.replace(tzinfo=timezone.utc)
-        if value.tzinfo is None
-        else value.astimezone(timezone.utc)
-    )
-    ha_dt.utc_from_timestamp = lambda value: datetime.fromtimestamp(value, timezone.utc)
-    ha_dt.start_of_local_day = lambda value: (
-        value.replace(tzinfo=timezone.utc)
-        if value.tzinfo is None
-        else value.astimezone(timezone.utc)
-    )
 
     homeassistant.const = ha_const
     homeassistant.config_entries = ha_config_entries
@@ -145,14 +112,11 @@ def mock_dependencies():
     homeassistant.exceptions = ha_exceptions
     homeassistant.helpers = ha_helpers
     homeassistant.components = ha_components
-    homeassistant.util = ha_util
     ha_helpers.update_coordinator = ha_update_coordinator
     ha_helpers.event = ha_event
     ha_helpers.entity_platform = ha_entity_platform
     ha_helpers.typing = ha_typing
     ha_components.sensor = ha_sensor
-    ha_components.calendar = ha_calendar
-    ha_util.dt = ha_dt
 
     sys.modules["homeassistant"] = homeassistant
     sys.modules["homeassistant.const"] = ha_const
@@ -166,9 +130,6 @@ def mock_dependencies():
     sys.modules["homeassistant.helpers.typing"] = ha_typing
     sys.modules["homeassistant.components"] = ha_components
     sys.modules["homeassistant.components.sensor"] = ha_sensor
-    sys.modules["homeassistant.components.calendar"] = ha_calendar
-    sys.modules["homeassistant.util"] = ha_util
-    sys.modules["homeassistant.util.dt"] = ha_dt
 
     # External libraries used by the integration.
     sys.modules["aiohttp"] = MagicMock()
