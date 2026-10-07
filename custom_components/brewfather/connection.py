@@ -166,7 +166,11 @@ class Connection:
         if isinstance(obj, dict):
             return {k: self.to_dict(v) for k, v in obj.items()}
         elif hasattr(obj, "__dict__"):
-            return {k: self.to_dict(v) for k, v in obj.__dict__.items()}
+            return {
+                k: self.to_dict(v)
+                for k, v in obj.__dict__.items()
+                if v is not None
+            }
         elif isinstance(obj, list):
             return [self.to_dict(i) for i in obj]
         elif isinstance(obj, tuple):
