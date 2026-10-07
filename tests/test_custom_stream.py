@@ -177,3 +177,16 @@ def test_custom_stream_model_uses_published_fermentation_field_names() -> None:
         "report_source",
     ):
         assert hasattr(payload, field)
+
+
+def test_custom_stream_does_not_emit_gravity_unit_without_gravity_data() -> None:
+    connection = Connection("user", "key")
+    payload = custom_stream_data("BrewAssistant GF30")
+    payload.temp = 20.0
+    payload.temp_unit = "C"
+
+    as_dict = connection.to_dict(payload)
+
+    assert "gravity" not in as_dict
+    assert "gravity_unit" not in as_dict
+    assert "gravity_target" not in as_dict
