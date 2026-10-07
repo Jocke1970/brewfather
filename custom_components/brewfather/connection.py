@@ -139,25 +139,39 @@ class Connection:
             return None
         return await self.get_api_response(url, lambda data: data, accept_404 = True)
         
-    async def post_custom_stream(self, logging_id: str, data:custom_stream_data) -> bool:
+    async def post_custom_stream(self, logging_id: str, data: custom_stream_data) -> bool:
+        """Post Custom Stream telemetry using the logging ID as authentication.
+
+        Brewfather's Custom Stream contract identifies the stream through the
+        logging ID in the URL. API Basic Auth credentials are deliberately not
+        forwarded to the logging endpoint.
+        """
         url = LOG_CUSTOM_STREAM.format(logging_id)
         if DRY_RUN:
             raise Exception("Not implemented")
-        else:
-            success, response_text = await self.post(url, self.to_dict(data))
-            
-            if success == False:
-                return False
-            try:
-                response_json = json.loads(response_text)
+
+        payload = self.to_dict(data)
+        _LOGGER.debug("Posting custom stream data to Brewfather: %s", payload)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload) as response:
+                if response.status != 200:
+                    response_text = await response.text()
+                    raise UpdateFailed(
+                        f"Custom Stream failed: HTTP {response.status}: {response_text}"
+                    )
+
+                response_text = await response.text()
+                try:
+                    response_json = json.loads(response_text)
+                except json.JSONDecodeError as ex:
+                    raise UpdateFailed(
+                        f"Failed to parse Custom Stream response from {url}"
+                    ) from ex
+
                 result_value = response_json.get("result", "").lower()
                 return result_value in ["ok", "success"]
-            except json.JSONDecodeError as ex:
-                _LOGGER.error("Unable to parse JSON response: %s", str(ex))
-                raise UpdateFailed(
-                    f"Failed to parse JSON response, URL: {url}"
-                )
-        
+
     def to_dict(self, obj):
         """
         Convert an object to a dictionary.
