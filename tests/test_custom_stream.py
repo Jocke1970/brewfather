@@ -158,7 +158,7 @@ def test_custom_stream_configuration_does_not_send_fake_reading() -> None:
     ).read_text(encoding="utf-8")
 
     assert "without sending a test reading" in source
-    assert "validate/extract logging ID without creating a fake Brewfather log" in source
+    assert "validate/extract logging id without creating a fake brewfather log" in source.lower()
 
 
 def test_custom_stream_model_uses_published_fermentation_field_names() -> None:
