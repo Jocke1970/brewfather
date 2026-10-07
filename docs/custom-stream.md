@@ -1,188 +1,111 @@
-# Custom Stream Documentation
+# Custom Stream
 
-This document provides detailed information about setting up and using the Custom Stream feature in the Brewfather Home Assistant integration.
+Status: extended on `dev` for fermentation telemetry. Source contract: Brewfather Custom Stream documentation.
 
-## Overview
+## Purpose
 
-The Custom Stream feature allows you to automatically send temperature and gravity data from Home Assistant sensors to Brewfather's logging system. This enables you to use external sensors (like IoT devices, smart thermometers, hydrometers, etc.) to monitor your fermentation process directly in the Brewfather app.
+The Brewfather integration can optionally POST selected Home Assistant fermentation telemetry to Brewfather's Custom Stream endpoint.
 
-## Prerequisites
+Brewfather's published endpoint is:
 
-1. **Brewfather Account**: You need an active Brewfather account with a batch configured for fermentation
-2. **Home Assistant**: A working Home Assistant installation with temperature sensor entities
-3. **API Access**: Valid Brewfather API credentials (User ID and API Key)
-
-## Setup Guide
-
-### Step 1: Get Custom Stream Logging ID
-
-1. Open the Brewfather mobile app
-2. Navigate to your active batch
-3. Go to batch settings → "Logging"
-4. Select "Custom Stream"
-5. You'll see a URL like: `http://log.brewfather.net/stream?id=YOUR_LOGGING_ID`
-6. Copy the `YOUR_LOGGING_ID` portion (everything after `id=`)
-
-### Step 2: Identify Temperature Sensor
-
-Identify the Home Assistant entity that provides your fermentation temperature:
-
-- **Entity ID**: Full entity name (e.g., `sensor.fermentation_temperature`)
-- **Entity State**: The main value should be numeric temperature
-- **Entity Attribute**: (Optional) If temperature is stored in an attribute instead of the main state
-
-Example entities:
-```
-sensor.fermentation_chamber_temperature
-sensor.fermzilla_temp
-sensor.tilt_hydrometer  (if using attribute like 'temperature')
+```text
+https://log.brewfather.net/stream?id=<logging-id>
 ```
 
-### Step 2b: Identify Specific Gravity Sensor (Optional)
+The JSON field `name` is required and identifies the device in Brewfather. Brewfather documents a maximum rate of **one POST per device name every 15 minutes**; more frequent requests for the same name are ignored.
 
-If you have a hydrometer or gravity sensor, you can optionally configure it to send specific gravity readings:
+This fork therefore treats outgoing Custom Stream as a separate, best-effort logger:
 
-- **Entity ID**: Full entity name (e.g., `sensor.rapt_orangeboy_specific_gravity`)
-- **Entity State**: The main value should be numeric specific gravity (e.g., 1.050)
+- it only sends while Brewfather returns at least one batch with status `Fermenting`;
+- successful posts are locally rate-limited to at least 900 seconds apart;
+- arbitrary/manual coordinator refreshes do not create extra stream posts inside that window;
+- a failed Custom Stream POST is logged but does not make the normal Brewfather read path unavailable;
+- API Basic Auth credentials are not forwarded to the logging endpoint; the logging ID in the URL identifies the stream;
+- configuring the logging ID no longer sends a fake temperature reading.
 
-Example entities:
-```
-sensor.rapt_orangeboy_specific_gravity
-sensor.tilt_hydrometer_gravity
-sensor.ispindel_gravity
-```
+A Home Assistant restart may forget the in-memory last-post timestamp. Brewfather still enforces its own per-device 15-minute limit server-side.
 
-### Step 3: Configure in Home Assistant
+## Supported fields in this fork
 
-1. Go to Settings → Devices & Services
-2. Find your Brewfather integration
-3. Click "Configure"
-4. Enable "Custom Stream"
-5. Click Submit to proceed to custom stream configuration
-6. Fill in the form:
-   - **BrewFathers logging-id**: Enter your logging ID from Step 1
-   - **Temperature Sensor**: Select your temperature sensor entity from Step 2  
-   - **Specific Gravity Sensor (Optional)**: Select your gravity sensor entity from Step 2b (leave empty if not using)
+Brewfather supports many Custom Stream fields. The current integration exposes the fermentation-focused subset below.
 
-### Step 4: Validation
+| Brewfather field | Integration source | Notes |
+| --- | --- | --- |
+| `name` | Configurable text | Unique device name in Brewfather. Default: `BrewAssistant GF30`. |
+| `temp` | Required temperature entity | Primary beer temperature. |
+| `temp_unit` | Derived from primary entity | C/F/K. |
+| `gravity` | Optional numeric entity | Intended for SG. |
+| `gravity_unit` | Fixed to `G` when gravity data is present | SG 1.xxx. |
+| `aux_temp` | Optional temperature entity | Brewfather displays this as **Fridge Temp**. |
+| `ext_temp` | Optional temperature entity | Brewfather displays this as **Room Temp**. |
+| `temp_target` | Optional temperature entity | Current fermentation target temperature. |
+| `gravity_target` | Optional numeric entity | Target gravity / expected FG. |
+| `device_source` | Configurable text | Default: `BrewAssistant GF30`. |
+| `report_source` | Configurable text | Default: `Home Assistant`. |
 
-The integration will validate your configuration:
-- Tests connection to Brewfather Custom Stream endpoint
-- Verifies the temperature entity exists and has a valid numeric temperature value
-- Verifies the gravity entity exists and has a valid numeric value (if specified)
+Optional fields with missing/unknown/unavailable/non-numeric source values are omitted from the outgoing payload.
 
-## Configuration Examples
+Temperatures in `aux_temp`, `ext_temp` and `temp_target` are converted to the same unit as the primary `temp` source before transmission.
 
-### Example 1: Basic Temperature Sensor
-```
-Temperature Entity: sensor.fermentation_temperature
-Entity value: 20.5
-Gravity Entity: (leave empty)
-```
+## Recommended GF30 mapping
 
-### Example 2: Temperature + Hydrometer
-```
-Temperature Entity: sensor.fermentation_chamber_temperature
-Entity value: 19.8
-Gravity Entity: sensor.rapt_orangeboy_specific_gravity
-Entity value: 1.045
+For the BrewAssistant GF30 workflow:
+
+```text
+temp            = RAPT Pill beer temperature
+gravity         = RAPT Pill SG
+temp_target     = BrewAssistant current fermentation target
+gravity_target  = expected FG / BA target gravity when available
+aux_temp        = coolant/reservoir temperature, if desired
+ext_temp        = leave empty unless a true ambient/room sensor exists
 ```
 
-### Example 3: Tilt Hydrometer (Combined sensor)
-```
-Temperature Entity: sensor.tilt_orange_temperature  
-Entity value: 21.2
-Gravity Entity: sensor.tilt_orange_specific_gravity
-Entity value: 1.020
-```
+Do **not** send the GF30 internal beer-temperature sensor as `aux_temp` merely to get a second temperature into Brewfather. Brewfather renders `aux_temp` as “Fridge Temp”, while the GF30 internal sensor is a second beer-temperature observation. That sensor belongs in BrewAssistant's dual-sensor/safe-point diagnostics unless Brewfather adds a semantically correct extra beer-temperature channel.
 
-## Data Flow
+## Setup
 
-1. **Collection**: Home Assistant reads temperature and gravity (if configured) from your specified entities every 15 minutes (default update interval)
-2. **Conversion**: Temperature value is converted to appropriate unit and prepared for transmission
-3. **Transmission**: Data is posted to Brewfather's Custom Stream endpoint
-4. **Display**: Temperature and gravity appear in your Brewfather batch monitoring
+1. In Brewfather, enable **Settings → Power-ups → Custom Stream** and copy the logging URL/ID.
+2. In Home Assistant, open the Brewfather integration options and enable Custom Stream.
+3. Configure:
+   - Logging ID or full stream URL
+   - Custom Stream Device Name
+   - Beer Temperature
+   - optional Fridge/Coolant Temperature
+   - optional Room Temperature
+   - optional Target Temperature
+   - optional Specific Gravity
+   - optional Target Gravity / FG
+   - Device Source
+   - Report Source
+4. Save and reload/restart the integration as requested by Home Assistant.
 
-## Troubleshooting
+The setup validates entity existence/value/unit where applicable but does not POST a fake reading just to test the logging ID.
 
-### Common Errors and Solutions
+## Source semantics
 
-#### "Logging-id seems invalid"
-- **Problem**: The logging ID is incorrect or the Custom Stream endpoint is unreachable
-- **Solution**: 
-  - Verify you copied only the ID portion (not the full URL)
-  - Check your Brewfather app settings to ensure Custom Stream is enabled
-  - Ensure your Brewfather API credentials have proper permissions
+Brewfather's labels are fixed:
 
-#### "Entity not found" or "Entity does not have a valid numeric value"
-- **Problem**: The specified entity doesn't exist or doesn't provide numeric data
-- **Solution**:
-  - Check the entity ID spelling and ensure it exists in Home Assistant
-  - Verify the entity's current state contains a number (not "unknown" or "unavailable")
-  - Use Developer Tools → States to inspect your entity
+- `aux_temp` appears as **Fridge Temp**;
+- `ext_temp` appears as **Room Temp**;
+- `battery`, if added later, is specified by Brewfather as battery voltage rather than percentage;
+- `device_state`, pressure, pH, bubble rate, angle, RSSI, volume and other supported fields are not yet wired by this fork.
 
-#### "Gravity sensor unavailable"
-- **Problem**: The gravity sensor entity is unavailable or returning invalid data
-- **Solution**:
-  - Verify your hydrometer/gravity sensor is online and functioning
-  - Check that the entity state is a valid numeric gravity value (e.g., 1.050)
-  - If not using a gravity sensor, leave the field empty during configuration
+Do not overload a field with a different physical meaning simply because a graph slot exists.
 
-#### "Failed to post custom stream data"
-- **Problem**: Data transmission to Brewfather failed
-- **Solution**:
-  - Check Home Assistant logs for detailed error messages
-  - Verify internet connectivity 
-  - Confirm Brewfather API credentials are correct
+## Failure behavior
 
-### Debug Steps
+Custom Stream is deliberately non-critical.
 
-1. **Check Entity State**:
-   ```
-   Go to Developer Tools → States
-   Search for your temperature entity
-   Verify current state is numeric
-   ```
+If the outbound POST fails:
 
-2. **Review Integration Logs**:
-   ```
-   Go to Settings → System → Logs
-   Filter for "brewfather" 
-   Look for custom stream related messages
-   ```
+- the failure is logged;
+- the usual Brewfather coordinator continues reading batches/BrewTracker;
+- the local 15-minute success timestamp is not advanced, so a later normal coordinator cycle may retry.
 
-3. **Test API Credentials**:
-   - Remove and re-add the integration with fresh API credentials
-   - Ensure API key has "Read Batches" scope minimum
+No BrewAssistant hardware control depends on successful Custom Stream logging.
 
-## Limitations
+## Upstream source
 
-- Temperature and gravity data are sent every 15 minutes (matches integration update interval)
-- Temperature is required; gravity is optional
-- Requires active internet connection for data transmission
-- Entity must provide numeric values (strings like "20.5" or "1.045" are converted automatically)
+Brewfather Custom Stream documentation:
 
-## Advanced Configuration
-
-### Custom Update Intervals
-
-The integration updates every 15 minutes by default. This cannot be changed through the UI but can be modified in the integration code if needed.
-
-### Multiple Temperature Sensors
-
-Currently, only one temperature sensor and one gravity sensor per integration instance are supported. For multiple sensors, you would need multiple Brewfather batch configurations with different logging IDs.
-
-### Temperature Unit Conversion
-
-All temperatures are sent to Brewfather with appropriate unit labels. The integration automatically handles temperature units (Celsius, Fahrenheit, Kelvin), so your Home Assistant sensors can use any supported temperature unit.
-
-## Support
-
-If you encounter issues not covered in this guide:
-
-1. Check the [GitHub Issues](https://github.com/MvdDonk/brewfather/issues)
-2. Review Home Assistant logs for detailed error messages  
-3. Create a new issue with:
-   - Your configuration details (without sensitive data)
-   - Relevant log entries
-   - Steps to reproduce the problem
+<https://docs.brewfather.app/integrations/custom-stream>
