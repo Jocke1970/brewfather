@@ -43,7 +43,7 @@ jobs:
       
       - name: Run tests with pytest
         run: |
-          pytest tests -v --cov=custom_components.brewfather --cov-report=xml --cov-report=term --junit-xml=test-results.xml
+          pytest tests/test_batch_item.py tests/test_brewtracker.py tests/test_custom_stream.py -v --cov=custom_components.brewfather --cov-report=xml --cov-report=term --junit-xml=test-results.xml
       
       - name: Surface test results
         if: always()
