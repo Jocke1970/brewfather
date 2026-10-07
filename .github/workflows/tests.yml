@@ -8,6 +8,8 @@ on:
       - 'requirements-dev.txt'
   push:
     branches:
+      - dev
+      - beta
       - main
     paths:
       - '**.py'
@@ -41,7 +43,7 @@ jobs:
       
       - name: Run tests with pytest
         run: |
-          pytest tests/test_batch_item.py -v --cov=custom_components.brewfather.models --cov-report=xml --cov-report=term --junit-xml=test-results.xml
+          pytest tests -v --cov=custom_components.brewfather --cov-report=xml --cov-report=term --junit-xml=test-results.xml
       
       - name: Surface test results
         if: always()
