@@ -159,3 +159,21 @@ def test_custom_stream_configuration_does_not_send_fake_reading() -> None:
 
     assert "without sending a test reading" in source
     assert "validate/extract logging ID without creating a fake Brewfather log" in source
+
+
+def test_custom_stream_model_uses_published_fermentation_field_names() -> None:
+    payload = custom_stream_data("BrewAssistant GF30")
+
+    for field in (
+        "temp",
+        "aux_temp",
+        "ext_temp",
+        "temp_unit",
+        "gravity",
+        "gravity_unit",
+        "temp_target",
+        "gravity_target",
+        "device_source",
+        "report_source",
+    ):
+        assert hasattr(payload, field)
