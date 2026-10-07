@@ -2,12 +2,13 @@
 
 > **BrewTracker is a read-only extension of the Brewfather Integration for Home Assistant, originally created and maintained by [MvdDonk](https://github.com/MvdDonk).**
 
-This fork keeps the normal Brewfather integration and adds the minimum data access BrewAssistant needs from Brewfather:
+This fork keeps the normal Brewfather integration and adds the minimum BrewAssistant-facing extensions needed around it:
 
 - Brew Tracker runtime data;
 - active Brew Tracker discovery, including batches that are not yet `Fermenting`;
 - normalized Brew Tracker Home Assistant sensors;
-- a best-effort full-recipe probe for the active Brew Tracker batch.
+- a best-effort full-recipe probe for the active Brew Tracker batch;
+- optional Brewfather Custom Stream fermentation telemetry from selected Home Assistant entities.
 
 It does **not** contain BrewAssistant orchestration, fermentation control logic, BrewZilla control, safety decisions or recipe-schedule interpretation.
 
@@ -60,7 +61,7 @@ Recipe enrichment is deliberately best-effort. A temporary failure to load the f
 
 ## Design boundary
 
-This repository is a **data adapter**, not a BrewAssistant backend.
+This repository is primarily a **Brewfather data adapter**, not a BrewAssistant hardware/control backend. Its optional Custom Stream feature is an outbound telemetry logger only.
 
 It owns:
 
@@ -70,7 +71,8 @@ It owns:
 - raw Brew Tracker payload exposure;
 - best-effort full-recipe exposure;
 - small refresh compensation needed to keep the feed current;
-- focused tests and watchdogs for this local delta.
+- focused tests and watchdogs for this local delta;
+- optional, rate-limited Custom Stream POSTs of selected fermentation telemetry.
 
 It does **not** own:
 
@@ -79,7 +81,8 @@ It does **not** own:
 - BrewZilla/RAPT control;
 - supervised/direct control policy;
 - hardware safety decisions;
-- BrewAssistant dashboard business logic.
+- BrewAssistant dashboard business logic;
+- GF30/pump/freezer/coolant control or any other actuator decision.
 
 Those responsibilities belong downstream in `Jocke1970/brewassistant-beta`.
 
@@ -147,7 +150,7 @@ The migration preserved explicit recovery references; see [`docs/BREWTRACKER.md`
 
 ## Technical documentation
 
-[`docs/BREWTRACKER.md`](docs/BREWTRACKER.md) describes the intentional local delta, runtime contract, validation and recovery history.
+[`docs/BREWTRACKER.md`](docs/BREWTRACKER.md) describes the intentional BrewTracker delta, runtime contract, validation and recovery history. [`docs/custom-stream.md`](docs/custom-stream.md) describes the optional outbound fermentation telemetry contract.
 
 ---
 
