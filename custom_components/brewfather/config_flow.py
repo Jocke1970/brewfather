@@ -18,6 +18,16 @@ from .const import (
     CONF_CUSTOM_STREAM_LOGGING_ID,
     CONF_CUSTOM_STREAM_TEMPERATURE_ENTITY_NAME,
     CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME,
+    CONF_CUSTOM_STREAM_DEVICE_NAME,
+    CONF_CUSTOM_STREAM_AUX_TEMPERATURE_ENTITY_NAME,
+    CONF_CUSTOM_STREAM_EXT_TEMPERATURE_ENTITY_NAME,
+    CONF_CUSTOM_STREAM_TEMP_TARGET_ENTITY_NAME,
+    CONF_CUSTOM_STREAM_GRAVITY_TARGET_ENTITY_NAME,
+    CONF_CUSTOM_STREAM_DEVICE_SOURCE,
+    CONF_CUSTOM_STREAM_REPORT_SOURCE,
+    DEFAULT_CUSTOM_STREAM_DEVICE_NAME,
+    DEFAULT_CUSTOM_STREAM_DEVICE_SOURCE,
+    DEFAULT_CUSTOM_STREAM_REPORT_SOURCE,
 )
 from .connection import (
     Connection,
@@ -54,17 +64,48 @@ OPTIONS_SCHEMA = vol.Schema(
 OPTIONS_CUSTOM_STREAM_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_CUSTOM_STREAM_LOGGING_ID): cv.string,
+        vol.Optional(
+            CONF_CUSTOM_STREAM_DEVICE_NAME,
+            default=DEFAULT_CUSTOM_STREAM_DEVICE_NAME,
+        ): cv.string,
         vol.Required(CONF_CUSTOM_STREAM_TEMPERATURE_ENTITY_NAME): selector.EntitySelector(
             selector.EntitySelectorConfig(
                 domain=["sensor", "climate", "number"],
                 device_class=["temperature"]
             )
         ),
-        vol.Optional(CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME): selector.EntitySelector(
+        vol.Optional(CONF_CUSTOM_STREAM_AUX_TEMPERATURE_ENTITY_NAME): selector.EntitySelector(
             selector.EntitySelectorConfig(
-                domain=["sensor"]
+                domain=["sensor", "climate", "number"],
+                device_class=["temperature"]
             )
         ),
+        vol.Optional(CONF_CUSTOM_STREAM_EXT_TEMPERATURE_ENTITY_NAME): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain=["sensor", "climate", "number"],
+                device_class=["temperature"]
+            )
+        ),
+        vol.Optional(CONF_CUSTOM_STREAM_TEMP_TARGET_ENTITY_NAME): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain=["sensor", "climate", "number"],
+                device_class=["temperature"]
+            )
+        ),
+        vol.Optional(CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain=["sensor"])
+        ),
+        vol.Optional(CONF_CUSTOM_STREAM_GRAVITY_TARGET_ENTITY_NAME): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain=["sensor", "number"])
+        ),
+        vol.Optional(
+            CONF_CUSTOM_STREAM_DEVICE_SOURCE,
+            default=DEFAULT_CUSTOM_STREAM_DEVICE_SOURCE,
+        ): cv.string,
+        vol.Optional(
+            CONF_CUSTOM_STREAM_REPORT_SOURCE,
+            default=DEFAULT_CUSTOM_STREAM_REPORT_SOURCE,
+        ): cv.string,
     }
 )
 
@@ -136,6 +177,70 @@ def get_brewfather_temp_unit(ha_unit: str) -> str:
         return "K"
     else:
         return "C"  # Default to Celsius
+
+
+CUSTOM_STREAM_CONFIG_KEYS = (
+    CONF_CUSTOM_STREAM_DEVICE_NAME,
+    CONF_CUSTOM_STREAM_TEMPERATURE_ENTITY_NAME,
+    CONF_CUSTOM_STREAM_AUX_TEMPERATURE_ENTITY_NAME,
+    CONF_CUSTOM_STREAM_EXT_TEMPERATURE_ENTITY_NAME,
+    CONF_CUSTOM_STREAM_TEMP_TARGET_ENTITY_NAME,
+    CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME,
+    CONF_CUSTOM_STREAM_GRAVITY_TARGET_ENTITY_NAME,
+    CONF_CUSTOM_STREAM_DEVICE_SOURCE,
+    CONF_CUSTOM_STREAM_REPORT_SOURCE,
+)
+
+
+def copy_custom_stream_config(target: dict[str, Any], user_input: dict[str, Any]) -> None:
+    """Copy optional Custom Stream settings while omitting blank values."""
+    for key in CUSTOM_STREAM_CONFIG_KEYS:
+        value = user_input.get(key)
+        if value not in (None, ""):
+            target[key] = value
+
+
+def validate_optional_temperature_entities(hass, user_input: dict[str, Any]) -> dict[str, str]:
+    """Validate optional Custom Stream temperature entities."""
+    errors: dict[str, str] = {}
+    for key in (
+        CONF_CUSTOM_STREAM_AUX_TEMPERATURE_ENTITY_NAME,
+        CONF_CUSTOM_STREAM_EXT_TEMPERATURE_ENTITY_NAME,
+        CONF_CUSTOM_STREAM_TEMP_TARGET_ENTITY_NAME,
+    ):
+        entity_id = user_input.get(key)
+        if not entity_id:
+            continue
+        entity = hass.states.get(entity_id)
+        if entity is None:
+            errors[key] = "invalid_entity"
+            continue
+        if not validate_temperature_unit(entity):
+            errors[key] = "unsupported_temperature_unit"
+            continue
+        try:
+            if entity.state in ("unknown", "unavailable", None, ""):
+                errors[key] = "invalid_entity"
+            else:
+                float(entity.state)
+        except (TypeError, ValueError):
+            errors[key] = "invalid_entity"
+    return errors
+
+
+def validate_optional_numeric_entity(hass, user_input: dict[str, Any], key: str) -> str | None:
+    """Validate one optional numeric Custom Stream entity."""
+    entity_id = user_input.get(key)
+    if not entity_id:
+        return None
+    entity = hass.states.get(entity_id)
+    if entity is None or entity.state in ("unknown", "unavailable", None, ""):
+        return "invalid_entity"
+    try:
+        float(entity.state)
+    except (TypeError, ValueError):
+        return "invalid_entity"
+    return None
     
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Brewfather."""
@@ -255,6 +360,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 except (ValueError, TypeError):
                     errors[CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME] = "invalid_entity"
 
+        errors.update(validate_optional_temperature_entities(self.hass, user_input))
+        gravity_target_error = validate_optional_numeric_entity(
+            self.hass,
+            user_input,
+            CONF_CUSTOM_STREAM_GRAVITY_TARGET_ENTITY_NAME,
+        )
+        if gravity_target_error:
+            errors[CONF_CUSTOM_STREAM_GRAVITY_TARGET_ENTITY_NAME] = gravity_target_error
+
         # Validate logging ID
         logging_id = user_input.get(CONF_CUSTOM_STREAM_LOGGING_ID)
         if logging_id:
@@ -272,9 +386,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # All validation passed - complete setup
             final_config = self.config_data.copy()
             final_config[CONF_CUSTOM_STREAM_LOGGING_ID] = extract_logging_id_from_url(logging_id)
-            final_config[CONF_CUSTOM_STREAM_TEMPERATURE_ENTITY_NAME] = entity_name
-            if gravity_entity_name:
-                final_config[CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME] = gravity_entity_name
+            copy_custom_stream_config(final_config, user_input)
 
             return self.async_create_entry(title=final_config[CONF_NAME], data=final_config)
 
@@ -507,6 +619,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 errors[CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME] = "entity_not_found"
                 return self._show_custom_stream_form(user_input, errors)
 
+        errors.update(validate_optional_temperature_entities(self.hass, user_input))
+        gravity_target_error = validate_optional_numeric_entity(
+            self.hass,
+            user_input,
+            CONF_CUSTOM_STREAM_GRAVITY_TARGET_ENTITY_NAME,
+        )
+        if gravity_target_error:
+            errors[CONF_CUSTOM_STREAM_GRAVITY_TARGET_ENTITY_NAME] = gravity_target_error
+
         # Validate logging ID
         logging_id = user_input.get(CONF_CUSTOM_STREAM_LOGGING_ID)
         extracted_logging_id, logging_valid, logging_errors = await self._validate_logging_id(logging_id)
@@ -518,9 +639,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         # All validations passed - save configuration
         new_config = self.init_info.copy()
         new_config[CONF_CUSTOM_STREAM_LOGGING_ID] = extracted_logging_id
-        new_config[CONF_CUSTOM_STREAM_TEMPERATURE_ENTITY_NAME] = entity_name
-        if gravity_entity_name:
-            new_config[CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME] = gravity_entity_name
+        copy_custom_stream_config(new_config, user_input)
 
         self.hass.config_entries.async_update_entry(
             self.config_entry, data=new_config, options=self.config_entry.options
