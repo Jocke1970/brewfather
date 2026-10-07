@@ -133,7 +133,11 @@ def mock_dependencies():
         else value.astimezone(timezone.utc)
     )
     ha_dt.utc_from_timestamp = lambda value: datetime.fromtimestamp(value, timezone.utc)
-    ha_dt.start_of_local_day = lambda value: value
+    ha_dt.start_of_local_day = lambda value: (
+        value.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None
+        else value.astimezone(timezone.utc)
+    )
 
     homeassistant.const = ha_const
     homeassistant.config_entries = ha_config_entries
