@@ -134,7 +134,7 @@ def extract_logging_id_from_url(input_value: str) -> str:
         # Validate it's a Brewfather URL
         if "brewfather" not in parsed_url.netloc.lower():
             _LOGGER.warning("Custom Stream URL does not use a Brewfather host")
-            return input_value
+            return ""
             
         query_params = parse_qs(parsed_url.query)
         if "id" in query_params:
@@ -143,10 +143,10 @@ def extract_logging_id_from_url(input_value: str) -> str:
             return extracted_id
         else:
             _LOGGER.warning("No 'id' parameter found in Brewfather Custom Stream URL")
-            return input_value
+            return ""
     except Exception as ex:
         _LOGGER.warning("Failed to parse Brewfather Custom Stream URL: %s", str(ex))
-        return input_value
+        return ""
 
 def validate_temperature_unit(entity) -> bool:
     """Validate that the entity reports temperature in a supported unit."""
@@ -218,13 +218,6 @@ def validate_optional_temperature_entities(hass, user_input: dict[str, Any]) -> 
         if not validate_temperature_unit(entity):
             errors[key] = "unsupported_temperature_unit"
             continue
-        try:
-            if entity.state in ("unknown", "unavailable", None, ""):
-                errors[key] = "invalid_entity"
-            else:
-                float(entity.state)
-        except (TypeError, ValueError):
-            errors[key] = "invalid_entity"
     return errors
 
 
@@ -234,8 +227,10 @@ def validate_optional_numeric_entity(hass, user_input: dict[str, Any], key: str)
     if not entity_id:
         return None
     entity = hass.states.get(entity_id)
-    if entity is None or entity.state in ("unknown", "unavailable", None, ""):
+    if entity is None:
         return "invalid_entity"
+    if entity.state in ("unknown", "unavailable", None, ""):
+        return None
     try:
         float(entity.state)
     except (TypeError, ValueError):
@@ -350,15 +345,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if gravity_entity is None:
                 errors[CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME] = "invalid_entity"
             else:
-                # Validate that gravity entity has a numeric value
-                try:
-                    gravity_value = gravity_entity.state
-                    if gravity_value in ("unknown", "unavailable", None, ""):
-                        errors[CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME] = "invalid_entity"
-                    else:
+                gravity_value = gravity_entity.state
+                if gravity_value not in ("unknown", "unavailable", None, ""):
+                    try:
                         float(gravity_value)
-                except (ValueError, TypeError):
-                    errors[CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME] = "invalid_entity"
+                    except (ValueError, TypeError):
+                        errors[CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME] = "invalid_entity"
 
         errors.update(validate_optional_temperature_entities(self.hass, user_input))
         gravity_target_error = validate_optional_numeric_entity(
@@ -507,12 +499,18 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             temp_value = entity.state if not entity_attribute else entity.attributes.get(entity_attribute)
             
             if temp_value is None or temp_value in ("unknown", "unavailable", ""):
-                field = CONF_CUSTOM_STREAM_TEMPERATURE_ENTITY_NAME
-                return False, {field: "entity_not_found"}
+                # A configured source may legitimately be inactive between
+                # fermentation sessions. Runtime freshness/numeric validation
+                # decides whether a Custom Stream payload is eligible.
+                return True, {}
             
-            temp_float = float(temp_value)  # Test if it's convertible to float
+            temp_float = float(temp_value)  # Test if an available value is numeric
             unit = entity.attributes.get("unit_of_measurement", "°C")
-            _LOGGER.info("Current temperature reading: %.1f%s - Looking good! ✅", temp_float, unit)
+            _LOGGER.info(
+                "Configured Custom Stream temperature entity is currently %.1f%s",
+                temp_float,
+                unit,
+            )
             return True, {}
             
         except (ValueError, TypeError):
@@ -585,17 +583,13 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 errors[CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME] = "entity_not_found"
                 return self._show_custom_stream_form(user_input, errors)
             
-            # Validate that gravity entity has a numeric value
-            try:
-                gravity_value = gravity_entity.state
-                if gravity_value in ("unknown", "unavailable", None, ""):
+            gravity_value = gravity_entity.state
+            if gravity_value not in ("unknown", "unavailable", None, ""):
+                try:
+                    float(gravity_value)
+                except (ValueError, TypeError):
                     errors[CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME] = "entity_not_found"
                     return self._show_custom_stream_form(user_input, errors)
-                else:
-                    float(gravity_value)
-            except (ValueError, TypeError):
-                errors[CONF_CUSTOM_STREAM_GRAVITY_ENTITY_NAME] = "entity_not_found"
-                return self._show_custom_stream_form(user_input, errors)
 
         errors.update(validate_optional_temperature_entities(self.hass, user_input))
         gravity_target_error = validate_optional_numeric_entity(
