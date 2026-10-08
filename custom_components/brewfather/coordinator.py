@@ -626,10 +626,19 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
         return value
 
     def _custom_stream_due(self, now: datetime) -> bool:
-        """Return True when a new Custom Stream POST is allowed."""
-        if self.custom_stream_last_post_time is None:
+        """Return True when a new Custom Stream POST attempt is allowed."""
+        reference_times = [
+            value
+            for value in (
+                self.custom_stream_last_attempt_time,
+                self.custom_stream_last_post_time,
+            )
+            if value is not None
+        ]
+        if not reference_times:
             return True
-        elapsed = (now - self.custom_stream_last_post_time).total_seconds()
+        latest = max(reference_times)
+        elapsed = (now - latest).total_seconds()
         return elapsed >= CUSTOM_STREAM_MIN_INTERVAL_SECONDS
 
     @staticmethod
