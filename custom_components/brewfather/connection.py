@@ -60,7 +60,7 @@ class Connection:
         data = self.to_dict(stream_data)
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=data, auth=self.auth) as response:
+            async with session.post(url, json=data) as response:
                 if response.status == 200:
                     response_text = await response.text()
                     _LOGGER.debug("POST request response: %s", response_text)
@@ -166,7 +166,7 @@ class Connection:
                     response_json = json.loads(response_text)
                 except json.JSONDecodeError as ex:
                     raise UpdateFailed(
-                        f"Failed to parse Custom Stream response from {url}"
+                        "Failed to parse response from Brewfather Custom Stream endpoint"
                     ) from ex
 
                 result_value = response_json.get("result", "").lower()
