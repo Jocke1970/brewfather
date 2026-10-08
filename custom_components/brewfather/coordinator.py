@@ -39,6 +39,7 @@ from .const import (
     DEFAULT_CUSTOM_STREAM_DEVICE_SOURCE,
     DEFAULT_CUSTOM_STREAM_REPORT_SOURCE,
     CUSTOM_STREAM_MIN_INTERVAL_SECONDS,
+    CUSTOM_STREAM_MAX_SAMPLE_AGE_SECONDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -112,6 +113,14 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
         self.custom_stream_enabled = entry.data.get(CONF_CUSTOM_STREAM_ENABLED, False)
         self.last_update_success_time: Optional[datetime] = None
         self.custom_stream_last_post_time: Optional[datetime] = None
+        self.custom_stream_last_attempt_time: Optional[datetime] = None
+        self.custom_stream_last_success_time: Optional[datetime] = None
+        self.custom_stream_last_eligible_sample_time: Optional[datetime] = None
+        self.custom_stream_last_result: str = (
+            "idle" if self.custom_stream_enabled else "disabled"
+        )
+        self.custom_stream_last_reason: Optional[str] = None
+        self.custom_stream_last_payload_fields: list[str] = []
         if self.custom_stream_enabled:
             self.custom_stream_logging_id = entry.data.get(CONF_CUSTOM_STREAM_LOGGING_ID, None)
             self.custom_stream_device_name = entry.data.get(
@@ -173,35 +182,64 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
         all_batches_data:list[BatchInfo] = []
 
         # Custom Stream is deliberately decoupled from arbitrary coordinator refreshes.
-        # Brewfather documents a maximum of one POST per 15 minutes for each
-        # device name. We also only stream while Brewfather reports at least one
-        # batch in Fermenting status.
-        if (
-            self.custom_stream_enabled
-            and len(allBatches) > 0
-            and self._custom_stream_due(datetime.now(timezone.utc))
-        ):
-            stream_data = self.create_custom_stream_data()
-            if stream_data is None:
-                _LOGGER.debug("No valid data was found to post to custom stream")
-            else:
-                _LOGGER.debug(
-                    "Posting Brewfather custom stream data for device %s",
-                    stream_data.name,
+        # Brewfather documents a maximum of one POST per 15 minutes per device
+        # name. Device readings are batch-eligible while the batch is Fermenting
+        # or Conditioning. The outbound logger remains best-effort and may never
+        # make the normal Brewfather read path unavailable.
+        if self.custom_stream_enabled:
+            stream_now = datetime.now(timezone.utc)
+            if not self._custom_stream_due(stream_now):
+                self.custom_stream_last_result = "throttled"
+                self.custom_stream_last_reason = "local 15-minute device rate limit"
+            elif not await self._custom_stream_batch_active(allBatches):
+                self.custom_stream_last_result = "inactive_batch"
+                self.custom_stream_last_reason = (
+                    "no Brewfather batch in Fermenting or Conditioning"
                 )
-                try:
-                    success = await self.connection.post_custom_stream(
-                        self.custom_stream_logging_id,
-                        stream_data,
+            else:
+                stream_data = self.create_custom_stream_data(now=stream_now)
+                if stream_data is None:
+                    self.custom_stream_last_result = "not_eligible"
+                    if self.custom_stream_last_reason is None:
+                        self.custom_stream_last_reason = (
+                            "no fresh eligible primary temperature"
+                        )
+                    _LOGGER.debug(
+                        "No eligible data was found to post to custom stream: %s",
+                        self.custom_stream_last_reason,
                     )
-                    if success:
-                        self.custom_stream_last_post_time = datetime.now(timezone.utc)
-                    else:
-                        _LOGGER.error("Failed to post custom stream data")
-                except Exception as ex:
-                    # The outbound logger is best-effort and must never make the
-                    # normal Brewfather read path unavailable.
-                    _LOGGER.warning("Custom stream POST failed; continuing normal update: %s", ex)
+                else:
+                    self.custom_stream_last_eligible_sample_time = stream_now
+                    self.custom_stream_last_attempt_time = stream_now
+                    payload = self.connection.to_dict(stream_data)
+                    self.custom_stream_last_payload_fields = sorted(payload)
+                    _LOGGER.debug(
+                        "Posting Brewfather custom stream data for device %s",
+                        stream_data.name,
+                    )
+                    try:
+                        success = await self.connection.post_custom_stream(
+                            self.custom_stream_logging_id,
+                            stream_data,
+                        )
+                        if success:
+                            self.custom_stream_last_post_time = stream_now
+                            self.custom_stream_last_success_time = stream_now
+                            self.custom_stream_last_result = "sent"
+                            self.custom_stream_last_reason = "Brewfather returned success"
+                        else:
+                            self.custom_stream_last_result = "rejected"
+                            self.custom_stream_last_reason = (
+                                "Brewfather response did not confirm success"
+                            )
+                            _LOGGER.error("Failed to post custom stream data")
+                    except Exception as ex:
+                        self.custom_stream_last_result = "error"
+                        self.custom_stream_last_reason = str(ex)
+                        _LOGGER.warning(
+                            "Custom stream POST failed; continuing normal update: %s",
+                            ex,
+                        )
 
         for batch in allBatches:
             batchData = await self.connection.get_batch(batch.id)
@@ -511,6 +549,82 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
             _LOGGER.warning("Unsupported temperature unit '%s', defaulting to Celsius", ha_unit)
             return "C"
 
+    async def _custom_stream_batch_active(
+        self,
+        fermenting_batches: list[BatchesItemElement],
+    ) -> bool:
+        """Return True when Brewfather can record device readings for a batch."""
+        if len(fermenting_batches) > 0:
+            return True
+        try:
+            all_batches = await self.connection.get_all_batches()
+        except Exception as ex:
+            _LOGGER.warning(
+                "Unable to check Conditioning batches for Custom Stream: %s",
+                ex,
+            )
+            return False
+        return any(
+            str(getattr(batch, "status", "") or "").lower()
+            in {"fermenting", "conditioning"}
+            for batch in all_batches
+        )
+
+    @staticmethod
+    def _as_utc_datetime(value: Any) -> Optional[datetime]:
+        """Normalize an HA/sample timestamp to timezone-aware UTC."""
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            parsed = value
+        else:
+            try:
+                parsed = datetime.fromisoformat(
+                    str(value).replace("Z", "+00:00")
+                )
+            except (TypeError, ValueError):
+                return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    def _state_observed_at(self, state) -> Optional[datetime]:
+        """Prefer source sample time supplied by BA, then HA last_reported."""
+        if state is None:
+            return None
+        attrs = getattr(state, "attributes", {}) or {}
+        for key in (
+            "brewfather_sample_observed_at",
+            "source_observed_at",
+            "observed_at",
+        ):
+            observed = self._as_utc_datetime(attrs.get(key))
+            if observed is not None:
+                return observed
+        for attr in ("last_reported", "last_updated", "last_changed"):
+            observed = self._as_utc_datetime(getattr(state, attr, None))
+            if observed is not None:
+                return observed
+        return None
+
+    def _fresh_numeric_state(
+        self,
+        state,
+        *,
+        now: datetime,
+    ) -> Optional[float]:
+        """Return a numeric state only when its underlying sample is fresh."""
+        value = self._numeric_state(state)
+        if value is None:
+            return None
+        observed_at = self._state_observed_at(state)
+        if observed_at is None:
+            return None
+        age = max(0.0, (now - observed_at).total_seconds())
+        if age > CUSTOM_STREAM_MAX_SAMPLE_AGE_SECONDS:
+            return None
+        return value
+
     def _custom_stream_due(self, now: datetime) -> bool:
         """Return True when a new Custom Stream POST is allowed."""
         if self.custom_stream_last_post_time is None:
@@ -555,12 +669,19 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
         self,
         entity_id: Optional[str],
         target_unit: str,
+        *,
+        now: datetime,
+        require_fresh: bool = True,
     ) -> Optional[float]:
         """Read and normalize an optional temperature entity."""
         if not entity_id:
             return None
         state = self.hass.states.get(entity_id)
-        value = self._numeric_state(state)
+        value = (
+            self._fresh_numeric_state(state, now=now)
+            if require_fresh
+            else self._numeric_state(state)
+        )
         if value is None or state is None:
             return None
 
@@ -581,17 +702,35 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
         except ValueError:
             return None
 
-    def _optional_numeric_entity_value(self, entity_id: Optional[str]) -> Optional[float]:
-        """Read one optional numeric entity without unit conversion."""
+    def _optional_numeric_entity_value(
+        self,
+        entity_id: Optional[str],
+        *,
+        now: datetime,
+        require_fresh: bool = True,
+    ) -> Optional[float]:
+        """Read one optional numeric entity with an optional freshness gate."""
         if not entity_id:
             return None
-        return self._numeric_state(self.hass.states.get(entity_id))
+        state = self.hass.states.get(entity_id)
+        if require_fresh:
+            return self._fresh_numeric_state(state, now=now)
+        return self._numeric_state(state)
 
-    def create_custom_stream_data(self) -> Optional[custom_stream_data]:
-        """Build one Brewfather fermentation Custom Stream payload."""
+    def create_custom_stream_data(
+        self,
+        *,
+        now: Optional[datetime] = None,
+    ) -> Optional[custom_stream_data]:
+        """Build one freshness-gated Brewfather fermentation payload."""
+        now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         primary = self.hass.states.get(self.custom_stream_temperature_entity_name)
-        primary_temp = self._numeric_state(primary)
+        primary_temp = self._fresh_numeric_state(primary, now=now)
         if primary is None or primary_temp is None:
+            self.custom_stream_last_reason = (
+                "primary temperature missing, invalid, or older than "
+                f"{CUSTOM_STREAM_MAX_SAMPLE_AGE_SECONDS} seconds"
+            )
             return None
 
         primary_unit = primary.attributes.get("unit_of_measurement")
@@ -621,23 +760,34 @@ class BrewfatherCoordinator(DataUpdateCoordinator[BrewfatherCoordinatorData]):
         stream_data.aux_temp = self._temperature_entity_value(
             getattr(self, "custom_stream_aux_temperature_entity_name", None),
             primary_unit,
+            now=now,
+            require_fresh=True,
         )
         stream_data.ext_temp = self._temperature_entity_value(
             getattr(self, "custom_stream_ext_temperature_entity_name", None),
             primary_unit,
+            now=now,
+            require_fresh=True,
         )
         stream_data.temp_target = self._temperature_entity_value(
             getattr(self, "custom_stream_temp_target_entity_name", None),
             primary_unit,
+            now=now,
+            require_fresh=False,
         )
 
         stream_data.gravity = self._optional_numeric_entity_value(
-            getattr(self, "custom_stream_gravity_entity_name", None)
+            getattr(self, "custom_stream_gravity_entity_name", None),
+            now=now,
+            require_fresh=True,
         )
         stream_data.gravity_target = self._optional_numeric_entity_value(
-            getattr(self, "custom_stream_gravity_target_entity_name", None)
+            getattr(self, "custom_stream_gravity_target_entity_name", None),
+            now=now,
+            require_fresh=False,
         )
         if stream_data.gravity is not None or stream_data.gravity_target is not None:
             stream_data.gravity_unit = "G"
 
+        self.custom_stream_last_reason = "fresh eligible telemetry"
         return stream_data
