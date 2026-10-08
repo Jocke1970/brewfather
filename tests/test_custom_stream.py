@@ -356,11 +356,12 @@ def test_custom_stream_malformed_url_is_rejected_without_echoing_secret() -> Non
         Path(__file__).resolve().parents[1]
         / "custom_components/brewfather/config_flow.py"
     ).read_text(encoding="utf-8")
+    block = source.split("def extract_logging_id_from_url", 1)[1].split(
+        "def validate_temperature_unit", 1
+    )[0]
 
-    assert 'return ""' in source
-    assert "Successfully extracted Brewfather Custom Stream logging ID" in source
-    assert "input_value" not in source.split(
-        "def extract_logging_id_from_url", 1
-    )[1].split("def validate_temperature_unit", 1)[0].replace(
-        "input_value.startswith", ""
-    )
+    assert 'return ""' in block
+    assert "Successfully extracted Brewfather Custom Stream logging ID" in block
+    assert 'URL does not appear to be a Brewfather URL: %s' not in block
+    assert "Successfully extracted logging ID '%s'" not in block
+    assert "Failed to parse URL %s" not in block
