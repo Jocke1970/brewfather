@@ -133,19 +133,19 @@ def extract_logging_id_from_url(input_value: str) -> str:
         
         # Validate it's a Brewfather URL
         if "brewfather" not in parsed_url.netloc.lower():
-            _LOGGER.warning("URL does not appear to be a Brewfather URL: %s", input_value)
+            _LOGGER.warning("Custom Stream URL does not use a Brewfather host")
             return input_value
             
         query_params = parse_qs(parsed_url.query)
         if "id" in query_params:
             extracted_id = query_params["id"][0]
-            _LOGGER.info("Successfully extracted logging ID '%s' from URL", extracted_id)
+            _LOGGER.info("Successfully extracted Brewfather Custom Stream logging ID")
             return extracted_id
         else:
-            _LOGGER.warning("No 'id' parameter found in URL: %s", input_value)
+            _LOGGER.warning("No 'id' parameter found in Brewfather Custom Stream URL")
             return input_value
     except Exception as ex:
-        _LOGGER.warning("Failed to parse URL %s: %s", input_value, str(ex))
+        _LOGGER.warning("Failed to parse Brewfather Custom Stream URL: %s", str(ex))
         return input_value
 
 def validate_temperature_unit(entity) -> bool:
