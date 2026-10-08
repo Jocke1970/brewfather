@@ -206,7 +206,7 @@ def test_custom_stream_rate_gate_is_independent_of_coordinator_refreshes() -> No
 
     assert coordinator._custom_stream_due(NOW) is True
 
-    coordinator.custom_stream_last_post_time = NOW
+    coordinator.custom_stream_last_attempt_time = NOW
     assert coordinator._custom_stream_due(NOW + timedelta(seconds=899)) is False
     assert coordinator._custom_stream_due(NOW + timedelta(seconds=900)) is True
 
@@ -255,7 +255,7 @@ def test_custom_stream_does_not_forward_brewfather_api_credentials() -> None:
     assert "response from {url}" not in block
 
 
-def test_legacy_custom_stream_test_also_does_not_forward_api_credentials() -> None:
+def test_legacy_custom_stream_validation_is_non_mutating() -> None:
     source = (
         Path(__file__).resolve().parents[1]
         / "custom_components/brewfather/connection.py"
@@ -264,8 +264,9 @@ def test_legacy_custom_stream_test_also_does_not_forward_api_credentials() -> No
     block = source.split("async def test_custom_stream", 1)[1].split(
         "async def get_batches", 1
     )[0]
-    assert "session.post(url, json=data)" in block
-    assert "auth=self.auth" not in block
+    assert "return bool(str(logging_id or \"\").strip())" in block
+    assert "session.post" not in block
+    assert "fake device reading" in block
 
 
 def test_custom_stream_configuration_does_not_send_fake_reading_or_log_secret() -> None:
@@ -326,3 +327,40 @@ def test_custom_stream_does_not_emit_gravity_unit_without_gravity_data() -> None
     assert "gravity" not in as_dict
     assert "gravity_unit" not in as_dict
     assert "gravity_target" not in as_dict
+
+
+
+def test_custom_stream_rate_gate_uses_latest_attempt_or_success() -> None:
+    coordinator = _coordinator()
+    coordinator.custom_stream_last_post_time = NOW
+    coordinator.custom_stream_last_attempt_time = NOW + timedelta(seconds=30)
+
+    assert coordinator._custom_stream_due(NOW + timedelta(seconds=929)) is False
+    assert coordinator._custom_stream_due(NOW + timedelta(seconds=930)) is True
+
+
+def test_custom_stream_config_accepts_temporarily_unavailable_sources() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "custom_components/brewfather/config_flow.py"
+    ).read_text(encoding="utf-8")
+
+    assert "may legitimately be inactive between" in source
+    assert "Runtime freshness/numeric validation" in source
+    assert 'if entity.state in ("unknown", "unavailable", None, ""):' in source
+    assert "return None" in source
+
+
+def test_custom_stream_malformed_url_is_rejected_without_echoing_secret() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "custom_components/brewfather/config_flow.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'return ""' in source
+    assert "Successfully extracted Brewfather Custom Stream logging ID" in source
+    assert "input_value" not in source.split(
+        "def extract_logging_id_from_url", 1
+    )[1].split("def validate_temperature_unit", 1)[0].replace(
+        "input_value.startswith", ""
+    )
