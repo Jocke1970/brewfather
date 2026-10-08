@@ -71,6 +71,29 @@ class BrewfatherStatusSensor(CoordinatorEntity, SensorEntity):
         
         if self._entry.data.get("custom_stream_enabled", False):
             attrs["custom_stream"] = "✅ Enabled"
+            attrs["custom_stream_last_result"] = self.coordinator.custom_stream_last_result
+            attrs["custom_stream_last_reason"] = self.coordinator.custom_stream_last_reason
+            attrs["custom_stream_last_attempt"] = (
+                self.coordinator.custom_stream_last_attempt_time.isoformat()
+                if self.coordinator.custom_stream_last_attempt_time
+                else None
+            )
+            attrs["custom_stream_last_success"] = (
+                self.coordinator.custom_stream_last_success_time.isoformat()
+                if self.coordinator.custom_stream_last_success_time
+                else None
+            )
+            attrs["custom_stream_last_eligible_sample"] = (
+                self.coordinator.custom_stream_last_eligible_sample_time.isoformat()
+                if self.coordinator.custom_stream_last_eligible_sample_time
+                else None
+            )
+            attrs["custom_stream_last_payload_fields"] = (
+                self.coordinator.custom_stream_last_payload_fields
+            )
+            attrs["custom_stream_device_name"] = self._entry.data.get(
+                "custom_stream_device_name"
+            )
             entity_name = self._entry.data.get("custom_stream_temperature_entity_name")
             if entity_name:
                 entity = self.hass.states.get(entity_name)
